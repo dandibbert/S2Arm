@@ -396,6 +396,19 @@ class ImagePush(Base):
         self.assertEqual(got, [(f"{RP}/romfs.img", b"IMAGE")])
         self.assertFalse((self.pk / "romfs.img").exists())
 
+    def test_split_plan_send_materializes_library_pack(self):
+        # dev_run 走的两步路（push_pack.sh：plan → send，不走 run）同样要现拼库内形态的镜像（原先只有 run 拼，dev_run 推库里的包 FileNotFoundError: romfs.img）
+        sys.path.insert(0, str(push.R / "pack")); import romfs_image
+        (self.pk / "romfs.img").unlink(); (self.pk / "romfs.files").mkdir(); (self.pk / "romfs.files" / "x").write_bytes(b"IMA"); (self.pk / "romfs.files" / "y").write_bytes(b"GE")
+        idx = b"S2ARFS01" + struct.pack("<qi", 5, 2) + struct.pack("<qqii", 0, 3, 0, 1) + struct.pack("<qqii", 3, 2, 1, 1) + struct.pack("<i", 2) + b"xy" + struct.pack("<i", 0)
+        (self.pk / "romfs.s2aidx").write_bytes(idx); (self.pk / "romfs.imgmap").write_bytes(romfs_image.MAGIC + struct.pack("<qi", 5, 2) + struct.pack("<2q", 0, 3))
+        self.dev = Fake({}); got = []
+        self.dev.put_big = lambda src, rel: got.append((rel, Path(src).read_bytes()))
+        push.plan(self.dev, self.pk, self.w, full=True, say=self.log.append)
+        push.send(self.dev, self.pk, self.w, say=self.log.append)
+        self.assertEqual(got, [(f"{RP}/romfs.img", b"IMAGE")])
+        self.assertFalse((self.pk / "romfs.img").exists())
+
     def test_library_pack_image_already_on_phone_is_not_built(self):
         (self.pk / "romfs.img").unlink(); self.dev = Fake(self.phone("abc"))   # 机上已应用同一镜像：不拼、不推
         push.run(self.dev, self.pk, self.w, say=self.log.append)
@@ -442,6 +455,11 @@ class GameImgResume(Base):
     def push_it(self, dev):
         self.dev = dev
         push.plan(dev, self.pk, self.w, full=True, say=self.log.append); push.send(dev, self.pk, self.w, say=self.log.append)
+
+    def test_v3_img_manifest_plans(self):   # v0.3.0 单一 IMG 的清单是 v3（pack/img.py convert）：照推，game.img 直写（原先只认 v2，启动器 / dev_run 推 IMG 报「资源包不是 v2」）
+        (self.pk / "manifest.json").write_text('{"version": 3, "format": "img", "imgFile": "game.img", "index_sha256": "x"}')
+        self.dev = Fake({}); push.plan(self.dev, self.pk, self.w, full=True, say=self.log.append)
+        self.assertEqual((self.w / "direct_img.tsv").read_text().split("\t")[0], "game.img")
 
     def test_game_img_is_direct_not_tar(self):
         self.dev = Fake({}); push.plan(self.dev, self.pk, self.w, full=True, say=self.log.append)

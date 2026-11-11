@@ -19,7 +19,9 @@ int s2a_pack_apply(const char *docs); int s2a_untar(const char *tar, const char 
 int s2a_import_docs_pick(const s2a_launch_ctx *c, int game_data_env, const char *proc_docs, char *out, size_t n); int s2a_import_state_game(const char *proc_docs, const char *gid);
 int s2a_import_state_game_quick(const char *proc_docs, const char *gid);
 int s2a_game_install_state(const char *proc_docs, const char *gid);
-int s2a_img_scan(const char *proc_docs); int s2a_import_state(const char *docs); void s2a_pack_help_detail(int st, int again, char *d, size_t n); extern void (*s2a_pack_apply_progress)(int done, int total);
+int s2a_img_scan(const char *proc_docs);
+extern void (*s2a_pack_apply_phase)(int phase, uint64_t done, uint64_t total);
+static uint64_t g_ph[4][2]; static int g_phn[4]; static void phase(int ph, uint64_t d, uint64_t t) { if (ph > 0 && ph < 4) { g_ph[ph][0] = d; g_ph[ph][1] = t; g_phn[ph]++; } } int s2a_import_state(const char *docs); void s2a_pack_help_detail(int st, int again, char *d, size_t n); extern void (*s2a_pack_apply_progress)(int done, int total);
 // 与 runtime/src/pack_apply.c 同（闸门下一步与指纹记录）
 enum { S2A_GATE_READY, S2A_GATE_IMPORT, S2A_GATE_SETTLE, S2A_GATE_WAIT, S2A_GATE_STALLED, S2A_GATE_NONE, S2A_GATE_BROKEN };
 struct s2a_gate_watch { int n, moved; uint64_t fp; time_t changed; };
@@ -373,7 +375,13 @@ int main(void) {
       CHECK(sh(c) == 0, "⑭ 落到 games/<游戏号>/资源包/game.img、manifest 资源包号 = 头里的、index.tsv 只有 game.img、拷一半的没动");
       { char g3[1500]; snprintf(g3, sizeof g3, "%s/games/0100ABCD00000002", D3);
         CHECK(s2a_import_state(g3) == 1, "⑭ 挪好后 → 待导入（状态 %d）", s2a_import_state(g3));
+        s2a_pack_apply_phase = phase; memset(g_ph, 0, sizeof g_ph); memset(g_phn, 0, sizeof g_phn);
         CHECK(s2a_pack_apply(g3) == 0, "⑭ 应用成功");
+        s2a_pack_apply_phase = NULL;
+        // 分段进度（游戏库「安装中」蒙版）：② 从 game.img 解小文件按字节报到满（exefs/main.npdm 5000 + ctl/control.nacp 4）；③ 核对机上文件报到满；没有推送包不报 ①
+        CHECK(g_phn[2] > 0 && g_ph[2][0] == g_ph[2][1] && g_ph[2][1] == 5004, "⑭ 分段进度 ② 解小文件 %llu / %llu（期望 5004 / 5004）", (unsigned long long)g_ph[2][0], (unsigned long long)g_ph[2][1]);
+        CHECK(g_phn[3] > 0 && g_ph[3][0] == g_ph[3][1] && g_ph[3][1] >= 1, "⑭ 分段进度 ③ 核对 %llu / %llu", (unsigned long long)g_ph[3][0], (unsigned long long)g_ph[3][1]);
+        CHECK(g_phn[1] == 0, "⑭ 没有推送包不报 ①（报了 %d 次）", g_phn[1]);
         snprintf(c, sizeof c, "cmp -s '%s/src/npdm' '%s/资源包/exefs/main.npdm'", D, g3); CHECK(sh(c) == 0, "⑭ 小文件逐字节解出"); }
       CHECK(s2a_img_scan(D3) == 0, "⑭ 再扫一次：没有新的（拷到一半的仍不动）"); }
     printf("%s t_pack_apply：%d 处不符\n", bad ? "✗" : "✓", bad); return bad != 0;

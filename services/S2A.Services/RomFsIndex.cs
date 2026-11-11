@@ -252,6 +252,10 @@ namespace S2A.Services
         //   被覆盖的文件读覆盖层（同旧镜像的覆盖层语义）。文件不在 → null；长度不等于头里的整个文件长（推到一半）→ null（调用方照旧退回）；
         //   魔数 / 格式号不认识 → 抛（起局失败、说清原因，不读坏数据）。格式号只在布局真变时加一，新壳必须保留读旧号的分支
         public const string ImgName = "game.img";
+        // IMG 旁的派生偏移表（pack/img.py convert 写）：格式同 romfs.imgmap（"S2ARIM01" | i64 镜像长 = game.img 整个文件长 | i32 条数 | 条数 × i64），
+        //   按 romfs.s2aidx 的文件顺序给每个文件在 game.img 里的绝对偏移，-1 = 读界面覆盖层。和 romfs.s2aidx 一起在就走单文件镜像同一条预建路径（IndexedStorage），
+        //   起局不重建 RomFS 目录表（11-11 真机对比：有覆盖层时 RomFsBuilder 重建约 10 万条目 138.6 ms，预建路径 7.9 ms）
+        public const string ImgMapName = "game.imgmap";
         private static ReadOnlySpan<byte> ImgMagic => "S2AIMG01"u8;
         public static IStorage OpenImg(string programDir)
         {
@@ -264,8 +268,21 @@ namespace S2A.Services
             if (fmt != 1) { h.Dispose(); throw new InvalidDataException($"资源包 IMG 格式号 {fmt}，这个 S2Arm 只认 1：请更新 S2Arm（{path}）"); }
             long ro = BitConverter.ToInt64(hdr, 96), rl = BitConverter.ToInt64(hdr, 104), to = BitConverter.ToInt64(hdr, 112), tl = BitConverter.ToInt64(hdr, 120), total = BitConverter.ToInt64(hdr, 128);
             if (RandomAccess.GetLength(h) != total || rl <= 0) { h.Dispose(); return null; }
-            IStorage romfs = new HandleRange(h, ro, rl);
             Dictionary<string, string> overlay = OverlayFiles(Path.Combine(programDir, ImageOverlayDir));
+            string map = Path.Combine(programDir, ImgMapName), index = Path.Combine(programDir, FileName);
+            if (File.Exists(map) && File.Exists(index))
+            {
+                byte[] raw = File.ReadAllBytes(map);
+                int count = raw.Length >= 20 ? BitConverter.ToInt32(raw, 16) : -1;
+                if (count >= 0 && raw.AsSpan(0, 8).SequenceEqual(ImageMagic) && BitConverter.ToInt64(raw, 8) == total && raw.Length == 20 + count * 8L)
+                {
+                    long[] offsets = new long[count];
+                    Buffer.BlockCopy(raw, 20, offsets, 0, count * 8);
+                    return new IndexedStorage(Path.GetFullPath(Path.Combine(programDir, "romfs")), File.ReadAllBytes(index), index, overlay, h, offsets);
+                }
+                // 偏移表和这份 IMG 对不上（换过 IMG 没换表）：照下面现建，慢但对
+            }
+            IStorage romfs = new HandleRange(h, ro, rl);
             if (overlay == null) return romfs;
             byte[] list = ImgEntry(h, to, tl, "romfs.list") ?? throw new InvalidDataException($"资源包 IMG 缺 romfs.list，叠不了界面覆盖层：{path}");
             RomFsFileSystem fs = new(romfs);

@@ -98,7 +98,79 @@ def build(romfs_dir, others, out, gid, pack_id='', romfs_index=None, say=print):
 SKIP = ('romfs/', 'romfs.', 'romfs_overlay/', 'shaders/')   # 资源包里不进 IMG 的：RomFS（另建标准段）、旧镜像件、界面覆盖层、直连库（派生产物）
 
 
-KEEP = ('romfs_overlay/', 'shaders/')   # 转 IMG 后照旧按文件留在资源包里的（App 管的缓存，可更新；IMG 不动）
+KEEP = ('romfs_overlay/', 'shaders/', 'romfs.s2aidx')   # 转 IMG 后照旧按文件留在资源包里的派生件（App 管的缓存，可更新；IMG 不动）；romfs.s2aidx 配 game.imgmap 走预建路径
+MAP = 'game.imgmap'   # IMG 旁的派生偏移表（services RomFsIndex.OpenImg）：格式同 romfs.imgmap，偏移是 game.img 里的绝对位置，-1 = 界面覆盖层
+
+
+def orig_romfs(root, work):
+    """原始 RomFS（IMG 只装原始资源）→ (目录, 用完要删的临时目录或 None)。宽屏界面布局阶段（pack/stage_uilayout.sh）只把 ui_overlay.tsv 列的文件换进产物根 romfs、
+    原版取自 seed.txt 记的游戏数据目录 /romfs；所以原件 = 产物根 romfs，但这几个文件换回数据目录里的原版。其余文件一律取产物根（与 romfs.s2aidx 天然一致；
+    11-11 实测数据目录在播种后变过：别的文件长度与产物根差 1 字节，整棵取数据目录会和索引对不上）。临时目录建在 work 下：产物根 romfs 逐文件硬链（APFS / NTFS 都行、不占盘），
+    覆盖文件换成原版。没有覆盖 → 直接用产物根 romfs；有覆盖但 seed.txt 缺或原版缺 → 报红"""
+    romfs = os.path.join(root, 'romfs')
+    if not os.path.isdir(romfs): return None, None
+    try: ov = [l.strip() for l in open(os.path.join(root, 'ui_overlay.tsv'), encoding='utf-8') if l.strip()]
+    except FileNotFoundError: ov = []
+    if not ov: return romfs, None
+    sf = os.path.join(root, 'seed.txt')
+    src = next((l[4:].strip() for l in open(sf, encoding='utf-8') if l.startswith('src=')), '') if os.path.isfile(sf) else ''
+    lost = [r for r in ov if not os.path.isfile(os.path.join(src, 'romfs', r))] if src else ov
+    if lost: raise Red(f'产物根 romfs 叠过 {len(ov)} 个界面覆盖文件，找不到其中 {len(lost)} 个的原版（seed.txt 的 src={src or "无"}，如 {lost[:2]}），不能当原件进 IMG')
+    import shutil
+    tmp = os.path.join(work, 'romfs.orig.tmp'); shutil.rmtree(tmp, ignore_errors=True)
+    def place(s, d):
+        os.makedirs(os.path.dirname(d), exist_ok=True)
+        try: os.link(os.path.realpath(s), d)
+        except OSError: shutil.copyfile(s, d)
+    real = os.path.realpath(romfs)
+    for d, _, ns in romfs_list.walk(real):
+        for n in ns: place(os.path.join(d, n), os.path.join(tmp, os.path.relpath(os.path.join(d, n), real)))
+    for r in ov:
+        q = os.path.join(tmp, r)
+        if os.path.lexists(q): os.unlink(q)
+        place(os.path.join(src, 'romfs', r), q)
+    return tmp, tmp
+
+
+def std_files(path, base):
+    """IMG 里标准 RomFS 段（起点 base）的文件表 → {相对路径: (game.img 里的绝对偏移, 长度)}；按公开格式只读元数据，不读文件数据"""
+    with open(path, 'rb') as f:
+        def rd(off, n): f.seek(base + off); return f.read(n)
+        hs, dho, dhs, dmo, dms, fho, fhs, fmo, fms, data = struct.unpack('<10Q', rd(0, 0x50))
+        dmeta, fmeta = rd(dmo, dms), rd(fmo, fms)
+    out, todo = {}, [(0, '')]
+    while todo:
+        off, p = todo.pop()
+        _, _, child, first, _, nl = struct.unpack_from('<6I', dmeta, off)
+        name = dmeta[off + 24: off + 24 + nl].decode('utf-8'); here = (p + '/' + name).lstrip('/') if name else p
+        fo = first
+        while fo != 0xFFFFFFFF:
+            _, sib, foff, size, _, fnl = struct.unpack_from('<IIQQII', fmeta, fo)
+            out[(here + '/' + fmeta[fo + 32: fo + 32 + fnl].decode('utf-8')).lstrip('/')] = (base + data + foff, size); fo = sib
+        c = child
+        while c != 0xFFFFFFFF: todo.append((c, here)); c = struct.unpack_from('<6I', dmeta, c)[1]
+    return out
+
+
+def write_map(pack_dir, img_path):
+    """按资源包 romfs.s2aidx 的文件顺序写 game.imgmap：被覆盖的文件（资源包 romfs_overlay/ 下有）记 -1，其余是它在 game.img 标准 RomFS 段里的绝对偏移，
+    长度必须与索引一致（原件与覆盖后只差被覆盖的那几个文件），对不上报红。→ 写好的路径；资源包没有 romfs.s2aidx → None"""
+    idx = os.path.join(pack_dir, 'romfs.s2aidx')
+    if not os.path.isfile(idx): return None
+    import romfs_image
+    _, files = romfs_image.parse_index(idx)
+    over = {r[len('romfs_overlay/'):] for r, _ in pack_rows(pack_dir) if r.startswith('romfs_overlay/')}
+    h = header(img_path); seg = std_files(img_path, h['romfs'][0]) if h['romfs'][1] else {}
+    offs = []
+    for _, n, rel in files:
+        if rel in over: offs.append(-1); continue
+        if rel not in seg: raise Red(f'romfs.s2aidx 里的 {rel} 不在 game.img 的 RomFS 段，也不在覆盖层')
+        if seg[rel][1] != n: raise Red(f'{rel} 长度对不上：索引 {n}，IMG 里原件 {seg[rel][1]}（又不在覆盖层）')
+        offs.append(seg[rel][0])
+    out = os.path.join(pack_dir, MAP)
+    with open(out + '.tmp', 'wb') as f: f.write(romfs_image.MAGIC + struct.pack('<qi', h['total'], len(offs)) + struct.pack(f'<{len(offs)}q', *offs))
+    os.replace(out + '.tmp', out)
+    return out
 
 
 def pack_rows(pack_dir):
@@ -140,8 +212,12 @@ def write(root, pack_dir, out_path, progress=None, romfs_index=None, gid=None):
         src = os.path.join(pack_dir, rel)
         if not os.path.isfile(src): raise Red(f'资源包清单里的 {rel} 不在 {pack_dir}')
         others.append((rel, src))
-    romfs = os.path.join(root, 'romfs')
-    return build(romfs if os.path.isdir(romfs) else None, others, out_path, gid, image_id(pack_dir), romfs_index or default_romfs_index(), say=say)
+    rom, tmp = orig_romfs(root, os.path.dirname(os.path.abspath(out_path)))
+    try:
+        return build(rom, others, out_path, gid, image_id(pack_dir), romfs_index or default_romfs_index(), say=say)
+    finally:
+        if tmp:
+            import shutil; shutil.rmtree(tmp, ignore_errors=True)
 
 
 def convert(root, pack_dir, progress=None, romfs_index=None, gid=None):
@@ -154,11 +230,15 @@ def convert(root, pack_dir, progress=None, romfs_index=None, gid=None):
     out = os.path.join(pack_dir, 'game.img')
     write(root, pack_dir, out, progress, romfs_index, gid)
     h = header(out)
+    mp = write_map(pack_dir, out)
     ix = f"game.img\t{h['total']}\t{h['pack_id']}\n" + ''.join(l for r, l in rows if r.startswith(KEEP))
+    if mp: ix += f"{MAP}\t{os.path.getsize(mp)}\t{hashlib.sha256(open(mp, 'rb').read()).hexdigest()}\n"
     for rel, _ in rows:
         if not rel.startswith(KEEP):
             try: os.unlink(os.path.join(pack_dir, rel))
             except FileNotFoundError: pass
+    import shutil
+    shutil.rmtree(os.path.join(pack_dir, 'romfs.files'), ignore_errors=True)   # 旧形态库内镜像的硬链接目录（#329，不在清单里）：IMG 已有原件
     for d, subs, files in os.walk(pack_dir, topdown=False):   # 删空了的目录
         if d != pack_dir and not os.listdir(d): os.rmdir(d)
     def put(name, text):

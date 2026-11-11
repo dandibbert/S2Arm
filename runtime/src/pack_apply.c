@@ -104,6 +104,10 @@ static void log_line(const char *logp, const char *fmt, ...) {
 //   运行时照旧按路径读（不改各读取点）。头：0 "S2AIMG01" | 8 u32 格式号 | 112/120 目录表偏移 / 长 | 128 整个文件长；
 //   目录表：u32 槽数 | u32 条目数 | 槽数 × {u64 路径哈希（0 = 空槽）, u64 偏移, u64 长度, u32 路径偏移, u32 路径长} | 路径区。romfs.list 是给服务层的、不解
 typedef struct { char *rel; uint64_t off, len; } img_ent;
+// 应用资源包的分段进度（游戏库「安装中」扇形蒙版用，s2a_pack_apply_progress 照旧只报待解包数）：
+//   phase 1 = 解开推送包（done / total = 包数）；2 = 从 game.img 解小文件（字节）；3 = 核对机上文件（文件数）。主调方设、本文件只调，NULL = 不报
+void (*s2a_pack_apply_phase)(int phase, uint64_t done, uint64_t total);
+#define PHASE(ph, d, t) do { if (s2a_pack_apply_phase) s2a_pack_apply_phase((ph), (d), (t)); } while (0)
 static int img_toc(const char *root, img_ent **out, size_t *n) {   // 0 = 读到（*n 条）；1 = 没有 game.img；负数 = IMG 坏 / 格式号不认
     char p[2200]; snprintf(p, sizeof p, "%s/game.img", root); *out = NULL; *n = 0;
     int fd = open(p, O_RDONLY); if (fd < 0) return 1;
@@ -132,16 +136,18 @@ static int img_extract(const char *root, unsigned *nf, uint64_t *nb) {
     img_ent *e; size_t n; int rc = img_toc(root, &e, &n); if (rc) return rc > 0 ? 0 : rc;
     char ip[2200]; snprintf(ip, sizeof ip, "%s/game.img", root); int fd = open(ip, O_RDONLY); if (fd < 0) { img_free(e, n); return -10; }
     uint8_t *buf = malloc(1 << 20); rc = 0;
+    uint64_t all = 0, got = 0; for (size_t i = 0; i < n; i++) all += e[i].len;
+    PHASE(2, 0, all);
     for (size_t i = 0; i < n && !rc; i++) {
         if (!safe(e[i].rel)) { untar_err("IMG 路径不安全", e[i].rel, EINVAL); rc = -3; break; }
         char p[2400], tmp[2500]; struct stat st; snprintf(p, sizeof p, "%s/%s", root, e[i].rel);
-        if (!stat(p, &st) && (uint64_t)st.st_size == e[i].len) continue;
+        if (!stat(p, &st) && (uint64_t)st.st_size == e[i].len) { got += e[i].len; PHASE(2, got, all); continue; }
         if (mkdirs(p)) { rc = -4; break; }
         snprintf(tmp, sizeof tmp, "%s.img.tmp", p); int o = open(tmp, O_WRONLY | O_CREAT | O_TRUNC, 0644);
         if (o < 0) { untar_err("建", tmp, errno); rc = -4; break; }
         for (uint64_t done = 0; done < e[i].len && !rc;) { size_t want = e[i].len - done > (1u << 20) ? (1u << 20) : (size_t)(e[i].len - done);
             ssize_t r = pread(fd, buf, want, (off_t)(e[i].off + done));
-            if (r <= 0 || write(o, buf, (size_t)r) != r) { untar_err("从 IMG 解", e[i].rel, errno); rc = -4; } else done += (uint64_t)r; }
+            if (r <= 0 || write(o, buf, (size_t)r) != r) { untar_err("从 IMG 解", e[i].rel, errno); rc = -4; } else { done += (uint64_t)r; got += (uint64_t)r; PHASE(2, got, all); } }
         if (close(o) && !rc) { untar_err("写完关闭", tmp, errno); rc = -4; }
         if (!rc && rename(tmp, p)) { untar_err("改名", p, errno); rc = -4; }
         if (rc) unlink(tmp); else { (*nf)++; *nb += e[i].len; }
@@ -198,7 +204,9 @@ static unsigned verify_present(const char *root, char *ex, size_t exn) {
     char ip[2100]; snprintf(ip, sizeof ip, "%s/index.tsv", root); FILE *f = fopen(ip, "r");
     if (!f) { snprintf(ex, exn, "index.tsv 打不开：%s", strerror(errno)); return 1; }   // 审计 P2-7：原先只记缺 1 个、例子为空
     char line[4600], p[6800]; unsigned miss = 0; struct stat st; ex[0] = 0;
+    uint64_t total = 0, done = 0; while (fgets(line, sizeof line, f)) total++; rewind(f); PHASE(3, 0, total);
     while (fgets(line, sizeof line, f)) {
+        if (++done % 256 == 0 || done == total) PHASE(3, done, total);
         char *t = strchr(line, '\t'); if (!t) continue; *t = 0; long long want = atoll(t + 1);
         snprintf(p, sizeof p, "%s/%s", root, line);
         if (stat(p, &st) || !S_ISREG(st.st_mode) || st.st_size != want) { if (!miss++) snprintf(ex, exn, "%s（%s）", line, stat(p, &st) ? "不在" : "大小不符"); }
@@ -241,6 +249,7 @@ int s2a_pack_apply(const char *docs) {
     if (d) { struct dirent *e; while ((e = readdir(d)) && nn < 4096) { size_t l = strlen(e->d_name); if (l > 4 && !strcmp(e->d_name + l - 4, ".tar") && strncmp(e->d_name, "._", 2)) names[nn++] = strdup(e->d_name); } closedir(d); }
     qsort(names, (size_t)nn, sizeof *names, name_cmp);
     if (s2a_pack_apply_progress) s2a_pack_apply_progress(0, nn);
+    if (nn) PHASE(1, 0, (uint64_t)nn);
     for (int i = 0; i < nn && !rc; i++) {
         char t[2400]; snprintf(t, sizeof t, "%s/%s", inc, names[i]);
         unsigned f0 = nf; uint64_t b0 = nb, t1 = now_ns();
@@ -252,7 +261,7 @@ int s2a_pack_apply(const char *docs) {
             if (g_untar_trunc && !unlink(t)) { del = 1; for (int j = i + 1; j < nn; j++) { char u[2400]; snprintf(u, sizeof u, "%s/%s", inc, names[j]); del += !unlink(u); }
                 char pp[2100]; snprintf(pp, sizeof pp, "%s/.pushed", root); unlink(pp); }
             snprintf(what, sizeof what, "解 %s%s", names[i], del ? "（截短包：已删它与其后待解包、推送记录，下次部署按已应用索引补推）" : ""); }
-        else { unlink(t); ntar++; if (s2a_pack_apply_progress) s2a_pack_apply_progress(i + 1, nn); log_line(logp, "进度：解开 %s（%u/%d）%u 个文件 %llu MB（%.1f 秒）", names[i], i + 1, nn, nf - f0, (unsigned long long)((nb - b0) >> 20), (now_ns() - t1) / 1e9); }
+        else { unlink(t); ntar++; if (s2a_pack_apply_progress) s2a_pack_apply_progress(i + 1, nn); PHASE(1, (uint64_t)(i + 1), (uint64_t)nn); log_line(logp, "进度：解开 %s（%u/%d）%u 个文件 %llu MB（%.1f 秒）", names[i], i + 1, nn, nf - f0, (unsigned long long)((nb - b0) >> 20), (now_ns() - t1) / 1e9); }
     }
     if (!rc) { int r = img_extract(root, &nf, &nb); if (r) { rc = r; snprintf(what, sizeof what, "从 game.img 解小文件（%s）", r == -11 ? "格式号不认识，请更新 S2Arm" : r == -10 ? "IMG 坏或没传完" : "写失败"); } }
     if (!rc) { char ex[2200]; unsigned miss = verify_present(root, ex, sizeof ex);

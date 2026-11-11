@@ -375,8 +375,9 @@ def plan(dev, pack, work, full=False, say=print):
     """算待推批次：写 <work>/push_NNN.tsv（路径 \\t 大小 \\t sha）与 <work>/pushed（续推账）；→ (批数, 文件数, 字节数)"""
     pack, work = Path(pack), Path(work)
     for f in work.glob("push_*.tsv"): f.unlink()
-    if jver((pack / "manifest.json").read_text(encoding="utf-8") if (pack / "manifest.json").is_file() else "") != 2:
-        say(f"【红】资源包不是 v2（{pack}/manifest.json）"); raise Fail("资源包不是 v2")
+    ver = jver((pack / "manifest.json").read_text(encoding="utf-8") if (pack / "manifest.json").is_file() else "")
+    if ver not in (2, 3):   # 3 = v0.3.0 单一 IMG（pack/img.py convert：game.img + 照旧按文件的着色器库 / 覆盖层）
+        say(f"【红】资源包清单版本 {ver} 不认（只认 2、3：{pack}/manifest.json）"); raise Fail("资源包清单版本不认")
     if full:
         have, pushed, keep = {}, {}, []
         say("资源包：S2A_PUSH_FULL=1，整包推送")
@@ -483,7 +484,7 @@ def resume_offset(dev, src, rel, size):
     return min(got[0] // IMG_PAGE * IMG_PAGE, size)
 
 
-def send(dev, pack, work, say=print, progress=None):
+def _send(dev, pack, work, say=print, progress=None):
     """推 plan 写好的批次 → 推了几批；每批写完才把它的文件记进 .pushed 并推上机；最后推索引与清单。
     progress(已传字节, 本次待传总字节, 已完成批次, 总批次)：流式工具按秒报文件 / 批内进度，旧工具与 devicectl 退路仍按批报（#266）。
     计数和手机蒙版同一口径：分母 = 已在手机上的 + 本次待传（plan 算好的差量），首装就是本次待传量；批内最多报到 size-1，成功记账后才报满。"""
@@ -602,6 +603,16 @@ RELAUNCH_S = 10   # 拉不起时每隔几秒再拉一次（拉一次约 1 秒；
 PROGRESS = re.compile(r"进度：解开 \S+（(\d+)/(\d+)）")
 
 
+def send(dev, pack, work, say=print, progress=None, stage=None):
+    """推（plan 之后）：要推的单文件镜像库里没有实体（romfs.files/ 库内形态，#329）先现拼，推完（含失败）就删，库里只留逐文件那一份。
+    run 与 dev_run 的两步路（tools/push_pack.sh：plan → send）都经这里：原先只有 run 现拼，dev_run 推库里的包 FileNotFoundError: romfs.img"""
+    made = materialize_images(pack, work, say, stage)
+    try:
+        return _send(dev, pack, work, say, progress)
+    finally:
+        for f in made: Path(f).unlink(missing_ok=True)
+
+
 def apply(dev, pack, work, nb, say=print, sleep=time.sleep, now=time.time, stall=STALL_S):
     """推完起一次 App 只解包（S2A_PACK_APPLY_ONLY=1，runtime/src/pack_apply.c）并等它解完：机上 .applied = 本包 index_sha256，且解包日志
     本次新增完成行「解开 N 个包 … .applied = <本包>」（只看 .applied 不够：同包重推时推之前就对得上，11-06 对照实测）。
@@ -676,11 +687,7 @@ def run(dev, pack, work, full=False, say=print, env=None, on_plan=None, progress
         elif fb < need:
             say(f"【红】测试设备剩余空间不足：可写 {fb >> 30} GB < 要 {need >> 30} GB（待推 {nbytes >> 30} GB + 解开时最大一批 + 余量）；先卸掉机上不用的包")
             raise Fail("测试设备空间不足")
-    made = materialize_images(pack, work, say, stage)
-    try:
-        send(dev, pack, work, say, progress)
-    finally:
-        for f in made: Path(f).unlink(missing_ok=True)   # 现拼的镜像推完（含失败）就删：库里只留逐文件那一份（#329）
+    send(dev, pack, work, say, progress, stage)
     return nb, nt, nbytes
 
 

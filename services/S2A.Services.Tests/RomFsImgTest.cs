@@ -3,6 +3,8 @@
 //   ① 没有界面覆盖层：OpenImg 交出标准 RomFS 段，LibHac RomFsFileSystem 逐文件读回与源目录相同
 //   ② 有覆盖层（romfs_overlay/a/s.txt）：读到覆盖层那份（长度不同也行），其余文件仍读 IMG
 //   ③ 文件长度不等于头里的整个文件长（推到一半）→ null；④ 格式号 2 → 抛（起局失败、说清要更新 S2Arm）
+//   ⑤ 旁边有 game.imgmap + romfs.s2aidx（pack/img.py convert 写）→ 走单文件镜像同一条预建路径（IndexedStorage，不重建目录表）：覆盖层文件读覆盖版、其余读 IMG 原件；
+//      偏移表记的镜像长与 game.img 不符（过期）→ 退回现建，读出的内容照样对
 using System;
 using System.Collections.Generic;
 using System.IO;
@@ -88,6 +90,47 @@ namespace S2A.Services.Tests
                 WriteImgFixture(rom, Path.Combine(game2, RomFsIndex.ImgName), 2, rels);
                 string why = null; try { RomFsIndex.OpenImg(game2); } catch (InvalidDataException e) { why = e.Message; }
                 Ck(why != null && why.Contains("格式号 2"), $"④ 格式号 2 → 抛：{why}");
+                // ⑤ 预建偏移表：IMG 是原件，索引建在覆盖后的 romfs 上
+                string game3 = Path.Combine(root, "game3"), patched = Path.Combine(root, "patched", "romfs"); Directory.CreateDirectory(game3);
+                string img3 = Path.Combine(game3, RomFsIndex.ImgName); WriteImgFixture(rom, img3, 1, rels);
+                foreach (var kv in files) { Directory.CreateDirectory(Path.GetDirectoryName(Path.Combine(patched, kv.Key))); File.WriteAllBytes(Path.Combine(patched, kv.Key), kv.Value); }
+                File.WriteAllBytes(Path.Combine(patched, "a", "s.txt"), "overlay!!"u8.ToArray());
+                RomFsIndex.Write(patched, Path.Combine(game3, RomFsIndex.FileName));
+                Directory.CreateDirectory(Path.Combine(game3, RomFsIndex.ImageOverlayDir, "a"));
+                File.WriteAllBytes(Path.Combine(game3, RomFsIndex.ImageOverlayDir, "a", "s.txt"), "overlay!!"u8.ToArray());
+                byte[] idx = File.ReadAllBytes(Path.Combine(game3, RomFsIndex.FileName));   // "S2ARFS01" | i64 | i32 n | n × {i64,i64,i32 po,i32 pl} | i32 | 路径区
+                int n = BitConverter.ToInt32(idx, 16), pathBase = 20 + n * 24 + 4;
+                long total3 = new FileInfo(img3).Length;
+                byte[] hdr = new byte[136]; using (var fh = File.OpenRead(img3)) fh.ReadExactly(hdr);
+                long ro = BitConverter.ToInt64(hdr, 96), rl = BitConverter.ToInt64(hdr, 104);
+                long[] offs = new long[n];
+                using (var fs3 = File.OpenRead(img3))
+                {
+                    byte[] seg = new byte[rl]; fs3.Position = ro; fs3.ReadExactly(seg);
+                    RomFsFileSystem rfs = new(new MemoryStorage(seg));
+                    for (int i = 0; i < n; i++)
+                    {
+                        int po = BitConverter.ToInt32(idx, 20 + i * 24 + 16), pl = BitConverter.ToInt32(idx, 20 + i * 24 + 20);
+                        string rel = Encoding.UTF8.GetString(idx, pathBase + po, pl);
+                        if (rel == "a/s.txt") { offs[i] = -1; continue; }
+                        rfs.FileTable.TryOpenFile("/" + rel, out RomFileInfo info);
+                        offs[i] = ro + rfs.Header.DataOffset + info.Offset;
+                    }
+                }
+                void WriteMap(long len)
+                {
+                    using var w = new BinaryWriter(File.Create(Path.Combine(game3, RomFsIndex.ImgMapName)));
+                    w.Write("S2ARIM01"u8.ToArray()); w.Write(len); w.Write(n); foreach (long o in offs) w.Write(o);
+                }
+                WriteMap(total3);
+                var s5 = RomFsIndex.OpenImg(game3);
+                bool right5 = s5 != null && Encoding.UTF8.GetString(ReadRom(s5, "/a/s.txt")) == "overlay!!" && ReadRom(s5, "/a/big.bin").AsSpan().SequenceEqual(big)
+                              && ReadRom(s5, "/top.dat").AsSpan().SequenceEqual(files["top.dat"]);
+                Ck(s5?.GetType().Name == "IndexedStorage" && right5, $"⑤ 有 game.imgmap + romfs.s2aidx → 预建路径（{s5?.GetType().Name}），覆盖层读覆盖版、其余读 IMG 原件");
+                WriteMap(total3 + 1);
+                var s6 = RomFsIndex.OpenImg(game3);
+                Ck(s6 != null && s6.GetType().Name != "IndexedStorage" && Encoding.UTF8.GetString(ReadRom(s6, "/a/s.txt")) == "overlay!!" && ReadRom(s6, "/a/big.bin").AsSpan().SequenceEqual(big),
+                   $"⑤ 偏移表过期（镜像长不符）→ 退回现建（{s6?.GetType().Name}），内容照样对");
             }
             finally { Directory.Delete(root, true); }
             Console.WriteLine($"{(bad == 0 ? "✓" : "✗")} RomFS 单一 IMG：{bad} 项不符");
