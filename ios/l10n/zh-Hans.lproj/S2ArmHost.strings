@@ -282,6 +282,7 @@
 "controller.resuming.hint" = "正在恢复已连接手柄的输入；轻点可停止连接";
 "controller.scanning" = "正在查找，轻点取消";
 "controller.turnOnBluetooth" = "打开蓝牙后重试";
+"diag.fileWord" = "诊断";
 "diag.error.bundleName" = "诊断包名脱敏失败，未导出诊断包";
 "diag.error.redact" = "诊断脱敏或写入失败，未导出诊断包";
 "diag.error.title" = "诊断包没生成";

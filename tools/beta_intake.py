@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 # 内测诊断包入库（10-23 维护者：明天内测 D 组游戏泛化 / E 组硬件矩阵，玩家在 App 里一键「导出诊断包」交回来）：
-#   tools/beta_intake.py [--inbox 目录]            把收件目录里没处理过的 s2a_diag_*.zip 解开、按会话出一行进 summary.tsv
+#   tools/beta_intake.py [--inbox 目录]            把收件目录里没处理过的诊断包（任意 *.zip，不看文件名，信息读 manifest.json）解开、按会话出一行进 summary.tsv
 #   tools/beta_intake.py [--inbox 目录] --report   「款 × 机型 × 症状」汇总表（症状：崩溃:<签名> / 卡死或被杀 / 没到 MARK / 正常）
 # 诊断包格式（schema 1，字段表发用户体验线对齐过）：manifest.json + logs/host*.log + 可选 logs/frames.tsv、metrickit/*.json。
 #   manifest 缺字段一律记「缺」不报错；会话的结局 / MARK / 帧数 / 热状态 / 实占峰值都从日志再算一遍（App 填的只作参考），首遇现编走 tools/firstuse_scan.py 同口径。

@@ -615,7 +615,11 @@ def diag_body(rest, now=None):
     if rest[:1] == ['export'] and len(rest) == 2: return {'action': 'export', 'path': os.path.abspath(os.path.expanduser(rest[1]))}
     if rest and rest != ['export']: return None
     desk = os.path.expanduser('~/Desktop'); base = desk if os.path.isdir(desk) else os.getcwd()
-    return {'action': 'export', 'path': os.path.join(base, time.strftime('S2Arm-诊断-%Y%m%d-%H%M%S.zip', time.localtime(now)))}
+    # 短名 S2Arm-诊断-月日-时分.zip（与 iOS / 启动器一致，版本信息在包里的 manifest）；同一分钟已有同名就加 -2、-3
+    stem = os.path.join(base, time.strftime('S2Arm-诊断-%m%d-%H%M', time.localtime(now)))
+    path, k = stem + '.zip', 2
+    while os.path.exists(path): path, k = f'{stem}-{k}.zip', k + 1
+    return {'action': 'export', 'path': path}
 
 def main():
     a = sys.argv[1:]

@@ -390,7 +390,7 @@ public sealed partial class EnvironmentWindow
     private async Task ExportDiagnosticsAsync()
     {
         if (connectedFolder is null || libraryId is null || libraryBusy) return;
-        var file = await StorageProvider.SaveFilePickerAsync(new FilePickerSaveOptions { Title = T("game.diag"), SuggestedFileName = "S2Arm-diagnostics.zip", DefaultExtension = "zip" });
+        var file = await StorageProvider.SaveFilePickerAsync(new FilePickerSaveOptions { Title = T("game.diag"), SuggestedFileName = $"S2Arm-{(language == "en" ? "diag" : "诊断")}-{DateTime.Now:MMdd-HHmm}.zip", DefaultExtension = "zip" });
         if (file?.TryGetLocalPath() is not { } output) return;
         libraryBusy = true; librarySummary = "library.working"; Render();
         try

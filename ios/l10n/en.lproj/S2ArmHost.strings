@@ -282,6 +282,7 @@
 "controller.resuming.hint" = "Restoring input from the connected controller. Tap to stop connecting";
 "controller.scanning" = "Searching, tap to cancel";
 "controller.turnOnBluetooth" = "Turn on Bluetooth and try again";
+"diag.fileWord" = "diag";
 "diag.error.bundleName" = "Couldn’t redact the bundle name, so no diagnostics bundle was exported";
 "diag.error.redact" = "Couldn’t redact or write the diagnostics, so no diagnostics bundle was exported";
 "diag.error.title" = "Diagnostics bundle not created";

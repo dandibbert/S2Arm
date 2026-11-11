@@ -335,7 +335,9 @@ extension LauncherView {
 
     private func exportDiagnostics() {
         let panel = NSSavePanel()
-        panel.nameFieldStringValue = "S2Arm-diagnostics.zip"
+        // 短名：S2Arm-诊断-月日-时分（英文界面 S2Arm-diag-…），与 iOS / Windows 一致；版本、系统、提交号都在包里，不进文件名（11-11 维护者）
+        let stamp = DateFormatter(); stamp.locale = Locale(identifier: "en_US_POSIX"); stamp.dateFormat = "MMdd-HHmm"
+        panel.nameFieldStringValue = "S2Arm-\(uiLanguage == "en" ? "diag" : "诊断")-\(stamp.string(from: Date())).zip"
         if panel.runModal() == .OK, let url = panel.url { model.diagnostics(exportTo: url) }
     }
 

@@ -2,7 +2,7 @@
 //   入口：① 系统「设置 → 本 App」里的开关「打开 App 时导出诊断包」（App 打开 / 回前台时看到开着就导出，并把开关关回去）；
 //         ② 游戏画面上四指长按 1.5 秒 → 菜单「导出诊断包」；③ 没进游戏的提示页（缺资源 / 导入失败）上的按钮；
 //         ④ 上次会话在前台没正常收尾（崩溃 / 卡死被杀 / 内存超限被杀）或 MetricKit 报了崩溃 / 卡顿 → 这次启动问一句「把上次的诊断发给我们？」。
-//   包：s2a_diag_<款>_<机型>_<iOS>_<提交前 9 位>_<MMDDHHMMSS>.zip，压缩后 ≤ 30 MB：
+//   包：S2Arm-诊断-<月日>-<时分>.zip（英文界面 S2Arm-diag-…；同一分钟再导出加 -2），压缩后 ≤ 30 MB：
 //       manifest.json、logs/host.log + logs/host-<起局时刻>.log（本局 + 机上归档的最近 9 局；单份超 8 MB 只留头 2 MB + 尾 6 MB）、
 //       logs/frames.tsv、logs/threads.txt、logs/unpack.log（有就放）、metrickit/*.json（MetricKit 崩溃 / 卡顿诊断原样 JSON）、
 //       shaders/*（现编着色器的输入：编到一半进程没了留下的 .inflight.*、翻译器报错留下的 .fail.*，有就放）、
@@ -151,10 +151,13 @@ const char *s2a_ios_host_commit(void) {
 // cap：每份日志上限（字节）；slim：去掉 frames.tsv / threads.txt / 最早那次会话（超 30 MB 时退一档）
 static NSURL *build_zip(NSUInteger cap, BOOL slim, NSString **err) {
     NSFileManager *fm = NSFileManager.defaultManager; NSString *D = docs();
-    NSDateFormatter *df = [NSDateFormatter new]; df.dateFormat = @"MMddHHmmss"; NSString *stamp = [df stringFromDate:NSDate.date];
     NSString *commit = [NSBundle.mainBundle objectForInfoDictionaryKey:@"S2ACommit"] ?: @"";
-    NSString *name = [NSString stringWithFormat:@"s2a_diag_%@_%@_%@_%@_%@", file_safe(game_name()), hw_model(), UIDevice.currentDevice.systemVersion,
-                      commit.length > 9 ? [commit substringToIndex:9] : (commit.length ? commit : @"nocommit"), stamp];
+    // 文件名只写「S2Arm-诊断-月日-时分」（英文界面 S2Arm-diag-…）：机型、系统、提交号、包名、游戏都在包里的 manifest.json，
+    //   不往文件名里塞（11-11 维护者：长名不专业）；同一分钟再导出加 -2、-3
+    NSDateFormatter *df = [NSDateFormatter new]; df.dateFormat = @"MMdd-HHmm"; df.locale = [NSLocale localeWithLocaleIdentifier:@"en_US_POSIX"];
+    NSString *outDir = [D stringByAppendingPathComponent:@"diag"]; [fm createDirectoryAtPath:outDir withIntermediateDirectories:YES attributes:nil error:nil];
+    NSString *base = [NSString stringWithFormat:@"S2Arm-%@-%@", S2AL(@"diag.fileWord"), [df stringFromDate:NSDate.date]], *name = base;
+    for (int k = 2; [fm fileExistsAtPath:[[outDir stringByAppendingPathComponent:name] stringByAppendingPathExtension:@"zip"]]; k++) name = [NSString stringWithFormat:@"%@-%d", base, k];
     NSString *W = [NSTemporaryDirectory() stringByAppendingPathComponent:name];
     [fm removeItemAtPath:W error:nil];
     [fm createDirectoryAtPath:[W stringByAppendingPathComponent:@"logs"] withIntermediateDirectories:YES attributes:nil error:nil];
@@ -240,13 +243,15 @@ static NSURL *build_zip(NSUInteger cap, BOOL slim, NSString **err) {
     [[NSJSONSerialization dataWithJSONObject:manifest options:NSJSONWritingPrettyPrinted | NSJSONWritingSortedKeys error:nil]
         writeToFile:[W stringByAppendingPathComponent:@"manifest.json"] atomically:NO];
     // 自己写 zip（write_zip）：manifest.json、logs/ 在根上（schema 1），文件名带 UTF-8 标记
-    NSString *outDir = [D stringByAppendingPathComponent:@"diag"]; [fm createDirectoryAtPath:outDir withIntermediateDirectories:YES attributes:nil error:nil];
     NSString *destPath = [[outDir stringByAppendingPathComponent:name] stringByAppendingPathExtension:@"zip"];
     NSURL *zip = write_zip(W, destPath) ? [NSURL fileURLWithPath:destPath] : nil;
     [fm removeItemAtPath:W error:nil];
     if (!zip && err) *err = S2AL(@"diag.error.zip");
-    // Documents/diag 只留最近 3 个
-    NSArray *old = [[[fm contentsOfDirectoryAtPath:outDir error:nil] filteredArrayUsingPredicate:[NSPredicate predicateWithFormat:@"SELF ENDSWITH '.zip'"]] sortedArrayUsingSelector:@selector(compare:)];
+    // Documents/diag 只留最近 3 个：按修改时间排（短名按字面排不准：同一分钟的 -2 排在前面、换了界面语言前缀不同、跨年 01 排在 12 前面）
+    NSArray *old = [[[fm contentsOfDirectoryAtPath:outDir error:nil] filteredArrayUsingPredicate:[NSPredicate predicateWithFormat:@"SELF ENDSWITH '.zip'"]] sortedArrayUsingComparator:^NSComparisonResult(NSString *a, NSString *b) {
+        NSDate *ta = [fm attributesOfItemAtPath:[outDir stringByAppendingPathComponent:a] error:nil].fileModificationDate ?: NSDate.distantPast;
+        NSDate *tb = [fm attributesOfItemAtPath:[outDir stringByAppendingPathComponent:b] error:nil].fileModificationDate ?: NSDate.distantPast;
+        return [ta compare:tb]; }];
     for (NSUInteger i = 0; old.count > 3 && i < old.count - 3; i++) [fm removeItemAtPath:[outDir stringByAppendingPathComponent:old[i]] error:nil];
     return zip;
 }

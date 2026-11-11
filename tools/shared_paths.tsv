@@ -99,7 +99,7 @@ run	测试出包	记分板 / 全绿 / 里程碑 tsv	只追加单行（< 4 KB 原
 ~/.s2arm/run/s2arm/ownplay	测试出包	维护者 实机局日志存档（两局测试之间有人自己玩过时，执行器起局前从机上拉回的 host.log / host.prev.log / frames.tsv / firstuse.txt），按款_时刻_机号分目录	只由 tools/dev_run.sh ownplay 写；各线只读；不进 gc
 ~/.s2arm/run/s2arm/openfonts	用户体验	开源替代共享字体产物（pack/fonts/make_open_fonts.py 生成；tests/openfonts_test.sh 缺省读它）	只有手动跑生成器时写（直接覆盖写，跑前确认没人在读）；单测只读。出 App 用 build/macos/OpenFonts 私有副本，不读这里
 ~/.s2arm/run/s2arm/cache/openfonts	用户体验	开源字体下载缓存（来源钉版本 + sha256）	先写 .part 再 replace；内容按 sha256 校验；可整目录删（下次重下）
-~/.s2arm/run/s2arm/beta_inbox	测试出包	内测诊断包收件目录（玩家 App「导出诊断包」交回的 s2a_diag_*.zip 放顶层；tools/beta_intake.py 解到 x/<包名>/、处理过的记 done/、按会话汇总进 summary.tsv）	诊断包与汇总长期留（内测证据），x/ 解包目录可按需清
+~/.s2arm/run/s2arm/beta_inbox	测试出包	内测诊断包收件目录（玩家 App「导出诊断包」交回的诊断包（S2Arm-诊断-*.zip / S2Arm-diag-*.zip，旧版 s2a_diag_*.zip）放顶层；tools/beta_intake.py 解到 x/<包名>/、处理过的记 done/、按会话汇总进 summary.tsv）	诊断包与汇总长期留（内测证据），x/ 解包目录可按需清
 ~/.s2arm/run/s2arm/apponly	测试出包	只换 App 程序快道的包目录（tools/app_only.sh：<款>-<提交>/pkg = 新 ipa + 登记包快照克隆）	每款只留最近两份；登记时 sched.sh pkg 另存快照，删这里不影响已登记的
 ~/.s2arm/run/s2arm/gate_data/dsh	测试出包	S2A.Dsh 门禁考卷的冻结输入（动森包目录 + 表，graphics/tools/direct/tests/t_dsh.sh freeze 写，inputs.sha 核内容）；生产出库不读不写	只读；只有人工 freeze 时写（已在就拒绝）
 ~/.s2arm/run/s2arm/cache/gate_dsh	测试出包	S2A.Dsh 门禁考卷：被测树的离线链对冻结输入只出抽样键（<输入指纹>-<链版本>-<键表>/，cas/ 内容寻址）；生产出库不读不写	临时目录出完 mv 成品（先到的留下）；只留最近 3 份
