@@ -98,7 +98,7 @@ typedef struct {
     struct gl_vao default_vao;                            // 0 号顶点数组（GLES 缺省顶点数组）：每个上下文一个、不共享（GLES 3.2 §10.3.1 容器对象）
     uint32_t dirty;                                       // GLD_*：哪些状态变了、下一笔绘制要重取管线 / 重绑
 } gl_state;
-enum { GLE_CULL = 1, GLE_DEPTH = 2, GLE_STENCIL = 4, GLE_SCISSOR = 16, GLE_POLY_OFFSET = 32, GLE_COLOR_TABLE = 64, GLE_FB_SRGB = 128 };   // gl_state.enable 的位；混合开关在 color[i].blend
+enum { GLE_CULL = 1, GLE_DEPTH = 2, GLE_STENCIL = 4, GLE_SCISSOR = 16, GLE_POLY_OFFSET = 32, GLE_COLOR_TABLE = 64, GLE_FB_SRGB = 128, GLE_DEBUG = 256, GLE_DEBUG_SYNC = 512 };   // gl_state.enable 的位；混合开关在 color[i].blend
 enum { GLD_PIPE = 1, GLD_DSS = 2, GLD_VP = 4, GLD_SC = 8, GLD_RES = 16, GLD_VB = 32 };
 extern __thread gl_state *gl_cur;   // 本线程的当前上下文状态（egl.m 在 MakeCurrent 时设；每个线程各绑各的，同 EGL 规范）
 void gl_set_error(GLenum e);      // 只记第一个（规范：多个错误时 glGetError 逐个取，这里只留第一个，够用到普查出现反例为止）
