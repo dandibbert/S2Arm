@@ -45,7 +45,11 @@ static pthread_mutex_t g_feedback_mu = PTHREAD_MUTEX_INITIALIZER;
 static dispatch_queue_t g_system_haptics_queue;
 static GCController *g_haptic_device; // 只在 g_system_haptics_queue 上访问
 static CHHapticEngine *g_haptic_engine;
-static id<CHHapticAdvancedPatternPlayer> g_haptic_player;
+static id<CHHapticPatternPlayer> g_haptic_player;   // 能建循环播放器就用循环的；建不了（见 system_play_on_queue）用普通播放器，快到事件末尾时重起
+static BOOL g_haptic_loops;          // 当前播放器是循环的
+static BOOL g_haptic_plain_only;     // 这只手柄建循环播放器失败过：之后只建普通播放器（换手柄清掉）
+static uint64_t g_haptic_started_ns; // 普通播放器这一轮的起播时刻
+#define S2A_HAPTIC_RESTART_NS (20ull * NSEC_PER_SEC)
 static dispatch_source_t g_haptic_timer;
 static BOOL g_haptic_playing;
 static s2a_hp_state g_haptic_retry;   // 只在 g_system_haptics_queue 上访问：失败退避与判死（ios/haptic_retry.h）
@@ -167,13 +171,28 @@ static void system_play_on_queue(s2a_pad_vibration pair[2]) {
             [[CHHapticEventParameter alloc] initWithParameterID:CHHapticEventParameterIDHapticIntensity value:1],
             [[CHHapticEventParameter alloc] initWithParameterID:CHHapticEventParameterIDHapticSharpness value:0.5]] relativeTime:0 duration:30];
         CHHapticPattern *pattern = [[CHHapticPattern alloc] initWithEvents:@[event] parameters:@[] error:&error];
-        g_haptic_player = pattern ? [g_haptic_engine createAdvancedPlayerWithPattern:pattern error:&error] : nil;
+        // 循环播放器在有的系统 / 手柄上建不出来（#584 iPad A16 / iPadOS 27.3 / 小鸡启明星：NSCocoaErrorDomain 4097；Mac 端 11-10
+        //   M1 Max / DualSense 同一个错，见 macos/front_mac.m rumble_play_on_queue），同一台机器上普通播放器能建能播：退到普通播放器，
+        //   它不能循环，靠下面的重起接上。循环播放器建失败后这个引擎也废了（接着在它上面建普通播放器会报 Client not registered），
+        //   所以记下来、丢掉引擎、从头再来；这一下不算失败次数（判死只看普通播放器那条路也走不通）
+        if (pattern && !g_haptic_plain_only) {
+            id<CHHapticAdvancedPatternPlayer> advanced = [g_haptic_engine createAdvancedPlayerWithPattern:pattern error:&error];
+            if (advanced) { advanced.loopEnabled = YES; g_haptic_player = advanced; g_haptic_loops = YES; }
+            else {
+                LOG("系统手柄震动：循环播放器建不了（%s/%ld），改用普通播放器", error.domain.UTF8String ?: "-", error ? (long)error.code : 0L);
+                g_haptic_plain_only = YES; system_reset_on_queue(); system_play_on_queue(pair); return;
+            }
+        } else if (pattern) { g_haptic_player = [g_haptic_engine createPlayerWithPattern:pattern error:&error]; g_haptic_loops = NO; }
         if (!g_haptic_player) { system_fail_on_queue("创建播放器失败", error); system_reset_on_queue(); return; }
-        g_haptic_player.loopEnabled = YES;
+    }
+    uint64_t now = clock_gettime_nsec_np(CLOCK_UPTIME_RAW);
+    if (g_haptic_playing && !g_haptic_loops && now - g_haptic_started_ns > S2A_HAPTIC_RESTART_NS) {   // 普通播放器：事件 30 秒，连着震到 20 秒就重起一轮
+        [g_haptic_player stopAtTime:CHHapticTimeImmediate error:nil]; g_haptic_playing = NO;
     }
     if (!g_haptic_playing && ![g_haptic_player startAtTime:CHHapticTimeImmediate error:&error]) {
         system_fail_on_queue("播放失败", error); system_reset_on_queue(); return;
     }
+    if (!g_haptic_playing) g_haptic_started_ns = now;
     g_haptic_playing = YES;
     if (![g_haptic_player sendParameters:@[
         [[CHHapticDynamicParameter alloc] initWithParameterID:CHHapticDynamicParameterIDHapticIntensityControl value:amplitude relativeTime:0],
@@ -181,7 +200,7 @@ static void system_play_on_queue(s2a_pad_vibration pair[2]) {
         system_fail_on_queue("更新强度失败", error); system_reset_on_queue(); return;
     }
     s2a_hp_on_ok(&g_haptic_retry);   // 真正播起来了才清零连续失败
-    static BOOL logged; if (!logged) { logged = YES; LOG("系统手柄震动：播放 强度 %.2f 锐度 %.2f", amplitude, sharp); }
+    static BOOL logged; if (!logged) { logged = YES; LOG("系统手柄震动：播放 强度 %.2f 锐度 %.2f（%s播放器）", amplitude, sharp, g_haptic_loops ? "循环" : "普通"); }
     system_arm_stop_timer();
 }
 
@@ -192,7 +211,7 @@ static void system_select_device(GCController *device) {
     uint64_t epoch = ++g_system_epoch; g_system_pending = NO; g_system_transition = YES;
     memset(g_system_pair, 0, sizeof g_system_pair);
     dispatch_async(g_system_haptics_queue, ^{
-        system_reset_on_queue(); g_haptic_device = device;
+        system_reset_on_queue(); g_haptic_device = device; g_haptic_plain_only = NO;
         s2a_hp_rearm(&g_haptic_retry);   // 换手柄 / 重新接入 = 新机会；已经报过的红不再刷屏
         pthread_mutex_lock(&g_feedback_mu);
         if (epoch == g_system_epoch) g_system_transition = NO;
