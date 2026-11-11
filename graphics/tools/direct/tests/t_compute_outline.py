@@ -36,6 +36,7 @@ cases = [
     shader().replace("    const uint step = 3u;", "    const uint step = 3u;\n    /* block comments are outside the accepted dialect */\n"),
     shader().replace("        dst[gid] = acc;", '        // braces and strings in a comment: " { } return\n        dst[gid] = acc;'),
     shader().replace(SIGNATURE, "constant uint hidden = 7u;\n#define VALUE (hidden)\n" + SIGNATURE).replace("    uint acc = gid + 1u;", "    uint hidden = gid;\n    uint acc = gid + 1u;").replace("        dst[gid] = acc;", "        dst[gid] = VALUE;").replace("    dst[gid] = acc;\n}", "}"),
+    shader().replace(SIGNATURE, "/* prefix */ #define VALUE (acc)\n" + SIGNATURE),
 ]
 results = dshfn.batch([("giant_fix", [source]) for source in cases])
 outputs = [result.get("ok", [None])[0] for result in results]
@@ -68,6 +69,7 @@ again = dshfn.fn("giant_fix", out)[0] if out else ""
 check("transformation is idempotent", out == again)
 check("line comments do not affect lexical scope or exit detection", outputs[8] is not None and "static __attribute__((noinline)) void s2a_outline_0(" in outputs[8] and '// braces and strings in a comment: " { } return' in outputs[8])
 check("prefix macros hiding local captures leave the entire source unchanged", outputs[9] == cases[9])
+check("comments before preprocessing directives cannot bypass the macro guard", outputs[10] == cases[10])
 
 if not bad:
     with tempfile.TemporaryDirectory(prefix="compute_outline_") as temp:
