@@ -7,6 +7,8 @@
   python3 tools/gate_route.py why    <改到的文件…>   → 一行人读的路由结论（门禁日志用）
   python3 tools/gate_route.py owns <钩子> <改到的文件…> → 改动里让这个钩子跑起来的文件（列车判红的钩子与本批有没有关），一行一个
   python3 tools/gate_route.py evidence <改到的文件…> → 这次改动要的最小充分证据（合入前自验 / 起不起局、起哪几款），一行一条
+  python3 tools/gate_route.py serve                 → 一个进程答多次：标准输入每行一问（上面的模式与参数，tab 分隔），答完打一行 \x1e；
+                                                     仓库索引与各单测覆盖面只算一次（单测里连问几十次用）
 改到的文件为空 = 不知道改了啥 → 全跑（手动跑门禁时的缺省）。
 单测的覆盖面自动推：单测文本里出现的文件名（*.sh *.py *.c *.h *.tsv *.mk）按文件名对上仓库里 tools/ pack/ tests/ 的文件，
 再顺着被测脚本里出现的文件名传递闭包（dev_run.sh → devlock.sh → devbattery.sh …）；单测自己被改也跑。
@@ -119,7 +121,16 @@ def _refs(path, by_name, direct):
     return frozenset(got), txt
 
 
+_COVER = {}   # (单测, full) → test_cover 结果：只依赖仓库内容、不依赖改动集，一个进程里（serve 连问几十次）每份单测只推一次
+
+
 def test_cover(test, files, by_name, full=False):
+    k = (test, full)
+    if k not in _COVER: _COVER[k] = _test_cover(test, files, by_name, full)
+    return _COVER[k]
+
+
+def _test_cover(test, files, by_name, full=False):
     """单测的覆盖面：自身 + 文本里点名的本线文件的传递闭包 + 头部「门禁覆盖」通配。
     full=True（缓存键用）：「门禁只看」不截断闭包，只并进去——路由可以窄，缓存输入只能宽（10-30：train_test「门禁只看」漏 known_red.py，
     缓存一直沿用改判定前的绿，核干净 main 给了假绿）"""
@@ -215,8 +226,17 @@ DIRNAMES = set()   # 仓库里出现过的全部目录名（任一层）
 TAIL2 = {}   # 末两段路径 → 以「/<末两段>」结尾的仓库文件（refs 相对目录写法用；逐个 endswith 扫全仓库要 390 万次）
 
 
+_INDEX = []
+
+
 def index():
-    """读仓库文件表、建 refs 用的索引（在仓库根调；一个进程一次）→ (仓库文件, 文件名 → 本线文件)"""
+    """读仓库文件表、建 refs 用的索引（在仓库根调）→ (仓库文件, 文件名 → 本线文件)。一个进程只建一次：TAIL2 是追加的，
+    建第二次每个末两段都成了两份、「只对上唯一一个文件才认」全落空（serve 连问时实测漏选 svc_hang_test）"""
+    if not _INDEX: _INDEX.append(_index())
+    return _INDEX[0]
+
+
+def _index():
     files = repo_files(); FILESET.update(files); DIRNAMES.update(d for f in files for d in f.split('/')[:-1])
     for f in files:
         ps = f.split('/')
@@ -234,8 +254,10 @@ def cover_files(test, files, by_name, full=False):
     return set(seen) | {f for f in files for g in globs if fnmatch.fnmatch(f, g)}
 
 
-def main():
-    mode, changed = sys.argv[1], [f for f in sys.argv[2:] if f]
+def main(argv=None):
+    argv = sys.argv[1:] if argv is None else argv
+    mode, changed = argv[0], [f for f in argv[1:] if f]
+    if mode == 'serve': return serve()
     if mode == 'owns':   # 10-25 维护者：vk/wp6 改了 graphics/nvn、红在 graphics/gate.sh，列车却报「与本批无关的步」——钩子与本批有关 = 本批有文件路由到它
         h, changed = changed[0], changed[1:]; ps = dict(load_table()).get(h)
         if ps is None: own = [f for f in changed if f.startswith(os.path.dirname(h) + '/')]   # 表里没登记的钩子：每次都跑，「负责的」按它自己的目录算
@@ -294,6 +316,20 @@ def main():
               + (f'（表外代码路径 {unknown[0]} 等 {len(unknown)} 个 → 钩子全跑）' if unknown else ''))
     else:
         sys.exit('用法：gate_route.py tests|hooks|ios|why|evidence <改到的文件…>')
+
+
+def serve():
+    """一个进程答多次（见文件头 serve）：每问的输出与单独起一次 gate_route.py 相同；某问报红退出（sys.exit）时红字照旧进标准错误、照常打分隔行，进程不退"""
+    import contextlib, io
+    for line in sys.stdin:
+        args = [a for a in line.rstrip('\n').split('\t') if a]
+        if not args: continue
+        buf = io.StringIO()
+        try:
+            with contextlib.redirect_stdout(buf): main(args)
+        except SystemExit as e:   # 与单独起一次相同：红字进标准错误，这一问的标准输出只留已打出的部分
+            if isinstance(e.code, str): sys.stderr.write(e.code + '\n')
+        sys.stdout.write(buf.getvalue() + '\x1e\n'); sys.stdout.flush()
 
 
 if __name__ == '__main__':

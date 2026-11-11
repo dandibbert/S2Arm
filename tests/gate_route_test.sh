@@ -1,12 +1,16 @@
 #!/bin/bash
 # 门禁只看：tools/gate_route.py tools/gate_decl.py tools/stage_inputs.py pack/stage_inputs/*.tsv tests/autoplay_test.sh tests/dev_run_test.sh tests/pack_jobs_test.sh tests/pack_test.sh tests/score_test.sh tests/stage_keys_test.sh tests/svc_hang_test.sh tests/xc_key_test.sh tests/diagzip_test.sh
 #   （10-28：断言的是对真实仓库算出的路由；改断言点名的单测（含它们头上的门禁声明）、路由脚本 / 表 / 阶段闭包才跑。被点名的工具脚本改了只影响「点名边」这类断言，交给改路由的那一笔）
-# 门禁路由单测（tools/gate_route.py，读本仓库真实文件，约 3 秒）：bash tests/gate_route_test.sh
+# 门禁路由单测（tools/gate_route.py，读本仓库真实文件；路由问答走一个常驻 serve 进程）：bash tests/gate_route_test.sh
 # 期望按路由规则手写（各钩子文件头「# 门禁路由：」+ 单测文本引用）：改调度只跑调度波及的单测、不跑钩子与 iOS；改文档什么都不跑；
 # 改服务 → 服务 / 原生 / 画幅钩子 + iOS，不跑 gfx 钩子；表外代码路径 → 钩子全跑；空改动 → 全跑；证据阶梯按目录分级
 set -u; H=$(cd "$(dirname "$0")/.." && pwd); cd "$H"; bad=0
 ck() { if eval "$2"; then echo "通 $1"; else echo "不通 $1"; bad=1; fi; }
-r() { python3 tools/gate_route.py "$@" | tr '\n' ' '; }
+# 路由问答走一个常驻 gate_route.py serve（11-11：原先每问起一次、每次重推 477 份单测覆盖面，单测 153–386 秒）：答案与单独起一次相同，
+#   每行一个结果、行尾补空格（同原先 | tr '\n' ' '）；收到分隔行 \x1e 为止。管道用两个命名管道，/bin/bash 3.2 也能跑
+RQ=$(mktemp -d); mkfifo "$RQ/q" "$RQ/a"; python3 tools/gate_route.py serve < "$RQ/q" > "$RQ/a" & RP=$!; exec 3> "$RQ/q" 4< "$RQ/a"
+trap 'exec 3>&-; wait $RP 2> /dev/null; exec 4<&-; rm -rf "$RQ"' EXIT   # 关写端 serve 读到结尾自己退；不 kill（/bin/bash 3.2 会在末行后补一行「Terminated」，门禁读末行）
+r() { local o= l IFS=$'\t'; printf '%s\n' "$*" >&3; while IFS= read -r l <&4; do [ "$l" = $'\x1e' ] && break; o="$o$l "; done; printf '%s' "$o"; }
 NT=$(( $(ls tests/*_test.sh | wc -l | tr -d ' ') + 1 ))   # 根单测 + 已登记的独立 drain_readflush 入口
 # 单测自己带目录点名的本线外文件按仓库路径认（10-22：toolchain271 改 graphics/metal/Makefile、xc_key.sh，路由没带上 tests/xc_key_test.sh，main 红在它上）；
 #   只认单测自己点名的，不顺着编排脚本往下认（post_android_prepare / cc_cache 单测在假仓库里跑桩，不该挂到 gfx 工具上）
