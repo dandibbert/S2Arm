@@ -1,7 +1,7 @@
 // 测试契约 tests/真机契约.md §1：S2A_COLD_START=1 时，任何 Metal 调用前清首启缓存（着色器 / 管线 / 程序二进制），清完写 Documents/cold_start.txt 一行。
 // 清：① 渲染器持久着色器缓存 NXGAL_SHADER_CACHE_DIR；② Ryujinx 主机着色器缓存（程序二进制）<Ryujinx 数据根>/games/*/cache——数据根取法同 services Exports.cs；
 //     ③ iOS：本 App 容器里 Metal 自己的着色器 / 管线缓存 Library/Caches/com.apple.metal（Mac 上它不在本进程容器里，不碰，行里注明）。
-//     ④ 渲染器设备归档（gal_core.m：设备上现编的管线与特化结果，<NXGAL_PSO_DEV_DIR 或 $HOME/Library/Caches/S2A/pso_dev>）——它也是首启没有的东西，不清会挡住首局现编、首局判分失真；
+//     ④ 渲染器设备归档（gal_core.m：设备上现编的管线与特化结果，<NXGAL_PSO_DEV_DIR 或 $HOME/Library/Application Support/S2A/pso_dev；老版本的 Library/Caches/S2A/pso_dev 首次会被挪过去，一并清>）——它也是首启没有的东西，不清会挡住首局现编、首局判分失真；
 //        S2A_COLD_KEEP_PSODEV=1 时保留（验「系统 Metal 缓存清空、只剩设备归档」的第二次冷启动用）。
 // 随包离线库（各片 metallib）与管线归档是出包产物，不是首启缓存，不清。
 using System;
@@ -68,9 +68,10 @@ namespace NxGal
             if (Directory.Exists(games)) foreach (string g in Directory.EnumerateDirectories(games)) Clear(Path.Combine(g, "cache"), $"Ryujinx 主机缓存 {Path.GetFileName(g)}");
             else what.Append("Ryujinx 主机缓存（无）；");
             string pd = Environment.GetEnvironmentVariable("NXGAL_PSO_DEV_DIR");
-            if (string.IsNullOrEmpty(pd)) pd = Path.Combine(Environment.GetEnvironmentVariable("HOME") ?? "", "Library", "Caches", "S2A", "pso_dev");
+            string home = Environment.GetEnvironmentVariable("HOME") ?? "";
+            if (string.IsNullOrEmpty(pd)) pd = Path.Combine(home, "Library", "Application Support", "S2A", "pso_dev");
             if (Environment.GetEnvironmentVariable("S2A_COLD_KEEP_PSODEV") == "1") what.Append("渲染器设备归档（S2A_COLD_KEEP_PSODEV=1，保留）；");
-            else Clear(pd, "渲染器设备归档");
+            else { Clear(pd, "渲染器设备归档"); Clear(Path.Combine(home, "Library", "Caches", "S2A", "pso_dev"), "渲染器设备归档（老位置 Caches）"); }
             if (OperatingSystem.IsIOS())
             {
                 string c1 = Path.Combine(Environment.GetEnvironmentVariable("HOME") ?? "", "Library", "Caches", "com.apple.metal");

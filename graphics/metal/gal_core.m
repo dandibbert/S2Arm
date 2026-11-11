@@ -1969,8 +1969,24 @@ void gal_compile_bg(void (^blk)(id comp)) {
         if (ser) pthread_rwlock_unlock(&g_ser_rw);
         dispatch_semaphore_signal(g_bgc_sem); });
 }
+// 设备归档缺省根：Application Support/S2A/pso_dev；老位置 Caches/S2A/pso_dev 在而新位置不在 → 整个挪过来；S2A 目录标不进 iCloud 备份
+static NSString *pso_dev_default_root(void) {
+    NSFileManager *fm = NSFileManager.defaultManager;
+    NSString *home = NSHomeDirectory(), *s2a = [home stringByAppendingPathComponent:@"Library/Application Support/S2A"];
+    NSString *dir = [s2a stringByAppendingPathComponent:@"pso_dev"], *old = [home stringByAppendingPathComponent:@"Library/Caches/S2A/pso_dev"];
+    NSError *e = nil;
+    if (![fm createDirectoryAtPath:s2a withIntermediateDirectories:YES attributes:nil error:&e]) GLOG("【红】设备归档根建不出：%s", e.localizedDescription.UTF8String);
+    if (![[NSURL fileURLWithPath:s2a] setResourceValue:@YES forKey:NSURLIsExcludedFromBackupKey error:&e]) GLOG("【红】设备归档根标不进备份失败：%s", e.localizedDescription.UTF8String);
+    if (![fm fileExistsAtPath:dir] && [fm fileExistsAtPath:old]) {
+        if ([fm moveItemAtPath:old toPath:dir error:&e]) GLOG("设备归档：老位置 Library/Caches/S2A/pso_dev 挪到 Application Support");
+        else GLOG("【红】设备归档从老位置挪不过来（%s），这次从空归档开始", e.localizedDescription.UTF8String);
+    }
+    return dir;
+}
 // ---------- 设备归档（10-22 维护者：设备上现编的完整版与特化结果进 App 自己的持久归档，下次启动先读它；不靠系统 Metal 编译缓存——它被我们设了 64 MB 上限，会挤掉）----------
-// 目录：$HOME/Library/Caches/S2A/pso_dev/<包键>.<GPU 架构>.<系统内部版本>/（换包 / 系统升级 = 新目录，旧条目自然不用；NXGAL_PSO_DEV_DIR 换根）。
+// 目录：$HOME/Library/Application Support/S2A/pso_dev/<包键>.<GPU 架构>.<系统内部版本>/（换包 / 系统升级 = 新目录，旧条目自然不用；NXGAL_PSO_DEV_DIR 换根）。
+//   v0.3.0 起不放 Library/Caches：系统空间紧时会清 Caches，玩家下次进局又得现编；Application Support 不被清，整个 S2A 目录标「不进 iCloud 备份」（可再生、不占玩家备份）。
+//   老版本留在 Library/Caches/S2A/pso_dev 的归档：新位置还没有时整个挪过来（同一容器内改名，不拷数据），已编过的不丢。
 //   包键 = 着色器目录的 shader_pack.key（出包 stage_shaders.sh 写），没有就用 gal_pso.idx 的大小 + 修改时间。
 // 收：登记着色器包时另建一个挂序列化器（只收二进制）的编译器，后台编的（gal_compile_bg：链接版背后的完整版、特化结果按完整描述、桩、函数体）都用它、都收；
 //   渲染线程上阻塞现编的那条走主编译器（不挂序列化器，不等写盘），编完另交后台再编一次收进来（dev_capture）。
@@ -2210,7 +2226,7 @@ static void dev_open(const char *dir) {
     if (key.length > 40) key = [key substringToIndex:40];
     char osv[64] = ""; size_t ol = sizeof osv; sysctlbyname("kern.osversion", osv, &ol, NULL, 0);
     const char *root = getenv("NXGAL_PSO_DEV_DIR");
-    NSString *base = root && *root ? @(root).stringByExpandingTildeInPath : [NSHomeDirectory() stringByAppendingPathComponent:@"Library/Caches/S2A/pso_dev"];
+    NSString *base = root && *root ? @(root).stringByExpandingTildeInPath : pso_dev_default_root();
     NSString *name = [NSString stringWithFormat:@"%@.xc%u.%@.%s", key, NXGAL_XC_VERSION, g_gdev.architecture.name, osv];
     if (gal_be_kind() == GAL_BE_MTL3) name = [name stringByAppendingString:@".mtl3"];
     NSString *d = [base stringByAppendingPathComponent:name];
