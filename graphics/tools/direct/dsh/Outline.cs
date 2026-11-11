@@ -66,7 +66,7 @@ namespace S2A.Dsh
             // Only the generator's standard includes / diagnostic pragmas need no preprocessor analysis.
             foreach (string line in code)
                 if (line.Contains("%:", StringComparison.Ordinal) || line.TrimStart().StartsWith('#') && !Regex.IsMatch(line,
-                    @"^\s*#\s*(?:include\s*<(?:metal_stdlib|simd/simd\.h)>|pragma\s+clang\s+diagnostic\s+(?:push|pop|ignored\s+""[^""]*""))\s*$")) return msl;
+                    @"^\s*#\s*(?:include\s*<(?:metal_stdlib|metal_atomic|simd/simd\.h)>|pragma\s+clang\s+diagnostic\s+(?:push|pop|ignored\s+""[^""]*""))\s*$")) return msl;
             int entry = -1; Match signature = Match.Empty;
             for (int i = 0; i < lines.Length; i++)
             {
