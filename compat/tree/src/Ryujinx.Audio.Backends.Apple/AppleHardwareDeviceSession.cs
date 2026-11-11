@@ -63,6 +63,15 @@ namespace Ryujinx.Audio.Backends.Apple
         private nint _audioQueue;
         private readonly nint[] _audioQueueBuffers = new nint[NumBuffers];
 
+        // S2Arm (#189): guest bytes/frame (6-channel PCM16) and device bytes/frame (stereo after the explicit downmix
+        //   stage). Equal for every other configuration.
+        private readonly int _guestBytesPerFrame;
+        private readonly int _deviceChannelCount;
+        // S2Arm (#189): null when the 6-channel stream goes to the queue as is (native, the default) or the session is not 6-channel.
+        private readonly AppleOutputProcessor _processor;
+        private readonly ConvertingReader _convertingReader;
+        private byte[] _convertedData;
+
         private readonly int _bytesPerFrame;
 
         private ulong _playedSampleCount;
@@ -121,8 +130,42 @@ namespace Ryujinx.Audio.Backends.Apple
             _driver = driver;
             _updateRequiredEvent = driver.GetUpdateRequiredEvent();
             _callbackDelegate = OutputCallback;
-            _bytesPerFrame = BackendHelper.GetSampleSize(requestedSampleFormat) * (int)requestedChannelCount;
-            _diag = S2AOutputDiag.Create(_bytesPerFrame, (int)requestedChannelCount, (int)requestedSampleRate, BackendHelper.GetSampleSize(requestedSampleFormat) * 8);
+            _guestBytesPerFrame = BackendHelper.GetSampleSize(requestedSampleFormat) * (int)requestedChannelCount;
+            _deviceChannelCount = (int)requestedChannelCount;
+
+            // S2Arm (#189): 显式下混——S2A_AUDIO_OUT=sys 时 6 声道混音在交给 AudioQueue 前由系统 AudioConverter 折成立体声。
+            //   渲染器自己的回落下混（游戏没给 DownMixParameter 时 [1.0, 0.707, 0.251, 0.707]）没有归一化：FL+FC 各 0.9
+            //   折到 1.536（2632/4800 采样削波）、六路全 0.9 折到 2.399（3484/4800 削波）；系统的显式下混归一化
+            //   （前 0.4142、中置 / 同侧环绕 0.2929、LFE 丢弃，最坏 0.4142+2×0.2929=1.0）不削波。帧数不变，
+            //   泵 / 播放信用 / 缓冲释放节奏不变，换档不改延迟；缺省 native 不走这里，行为同现状（渲染器自己下混）
+            if (requestedChannelCount == 6)
+            {
+                string configuredMode = Environment.GetEnvironmentVariable("S2A_AUDIO_OUT");
+                AppleOutputMode mode = AppleOutputModeSelector.FromEnvironment();
+
+                if (mode != AppleOutputMode.Native)
+                {
+                    if (requestedSampleFormat != SampleFormat.PcmInt16)
+                    {
+                        Console.Error.WriteLine($"[声] 【红】S2A_AUDIO_OUT={mode} 只支持 PCM16 的 5.1（本次 {requestedSampleFormat}）：按 native 直交 AudioQueue");
+                    }
+                    else
+                    {
+                        _deviceChannelCount = 2;
+                        _processor = AppleOutputProcessor.Create(mode, (int)requestedSampleRate, MaxFrames);
+                        Console.Error.WriteLine($"[声] 5.1→2.0 档「{AppleOutputModeSelector.ModeName(_processor.EffectiveMode)}」：6 声道 FL FR FC LFE BL BR → 2 声道（S2A_AUDIO_OUT；一片最多 {MaxFrames} 帧）" +
+                            (_processor.InitError != null ? $"；【红】器件没建起来，这一路按矩阵下混：{_processor.InitError}" : ""));
+                    }
+                }
+                else if (!string.IsNullOrWhiteSpace(configuredMode))
+                {
+                    Console.Error.WriteLine("[声] 5.1→2.0 档「native」：显式保持现状（渲染器自己下混）");
+                }
+            }
+
+            _bytesPerFrame = BackendHelper.GetSampleSize(requestedSampleFormat) * _deviceChannelCount;
+            _diag = S2AOutputDiag.Create(_bytesPerFrame, _deviceChannelCount, (int)requestedSampleRate, BackendHelper.GetSampleSize(requestedSampleFormat) * 8);
+            _convertingReader = _processor != null ? new ConvertingReader(this, _processor) : null;
 
             _gcHandle = GCHandle.Alloc(this, GCHandleType.Normal);
 
@@ -404,10 +447,19 @@ namespace Ryujinx.Audio.Backends.Apple
 
         private uint BufferBytes => RequestedSampleRate * BufferMilliseconds / 1000 * (uint)_bytesPerFrame;
 
+        // S2Arm (#189): a downmix slice holds at most one device buffer worth of frames
+        private int MaxFrames => (int)(RequestedSampleRate * BufferMilliseconds / 1000);
+
+        // S2Arm (#189): frame count of a queued buffer in device bytes. Equivalent to the base helper for native
+        //   sessions; for a folded 6-channel session DataSize holds stereo bytes, so RequestedChannelCount must not be used.
+        private ulong GetFrameCount(AudioBuffer buffer) => buffer.DataSize / (ulong)_bytesPerFrame;
+
         // S2Arm: 建 AudioQueue 和它的 32 个缓冲（起会话与媒体服务重置后重建共用）。缓冲放回同一个数组：泵按槽号取，换队列不用换泵
         private int CreateQueue()
         {
-            AudioStreamBasicDescription format = AppleHardwareDeviceDriver.GetAudioFormat(RequestedSampleFormat, RequestedSampleRate, RequestedChannelCount);
+            // S2Arm (#189): the queue is in the device format — stereo when the explicit downmix folds the 6-channel
+            //   stream first (the 6-channel PCM16 the renderer produces is _deviceChannelCount's business), 6-channel otherwise
+            AudioStreamBasicDescription format = AppleHardwareDeviceDriver.GetAudioFormat(RequestedSampleFormat, RequestedSampleRate, (uint)_deviceChannelCount);   // 平台例外：Apple 后端平台实现内部的队列格式（#189）
             nint callbackPtr = Marshal.GetFunctionPointerForDelegate(_callbackDelegate);
             nint userData = GCHandle.ToIntPtr(_gcHandle);
             int result = AudioQueueNewOutput(ref format, callbackPtr, userData, nint.Zero, nint.Zero, 0, out _audioQueue);
@@ -421,8 +473,8 @@ namespace Ryujinx.Audio.Backends.Apple
 
             // S2Arm（#189）：6 声道队列声明 5.1 布局（起会话与重建共用这条路径）：不声明时系统隐式 6→2 只复制
             //   FL/FR，中置（对白）与环绕整段丢失；真 5.1 设备声明后按布局直通。设置失败按无布局继续（打出【红】，
-            //   行为同旧），真 5.1 设备探建时已验过布局可用
-            if (RequestedChannelCount == 6)
+            //   行为同旧），真 5.1 设备探建时已验过布局可用。显式下混的队列是 2 声道（折叠已在前），不设布局
+            if (_deviceChannelCount == 6)
             {
                 AudioChannelLayout layout = new AudioChannelLayout
                 {
@@ -572,7 +624,9 @@ namespace Ryujinx.Audio.Backends.Apple
 
         private void ProcessPlayedSamples(int bytesPlayed)
         {
-            ulong samplesPlayed = GetSampleCount(bytesPlayed);
+            // S2Arm (#189): device bytes (stereo after the explicit downmix); the base helper would use the requested
+            //   6 channels. Frame counts are preserved by the fold, so guest and device frames agree.
+            ulong samplesPlayed = (ulong)bytesPlayed / (ulong)_bytesPerFrame;
             ulong remaining = samplesPlayed;
             bool needUpdate = false;
 
@@ -640,6 +694,30 @@ namespace Ryujinx.Audio.Backends.Apple
             }
         }
 
+        // S2Arm (#189): guest buffers (no Data array) are folded while the device reads them (AudioSampleQueue ->
+        //   ReadSamples through SampleReader), so the samples stay in guest memory and the session's frame accounting,
+        //   credit and release cadence are unchanged. The buffer's size is told in device bytes from here on.
+        public override bool RegisterBuffer(AudioBuffer buffer)
+        {
+            if (buffer.DataPointer == 0)
+            {
+                return false;
+            }
+
+            if (_processor == null)
+            {
+                return base.RegisterBuffer(buffer);
+            }
+
+            ulong frames = buffer.DataSize / (ulong)_guestBytesPerFrame;
+
+            buffer.DataSize = frames * (ulong)_bytesPerFrame;
+            _convertingReader.Inner = buffer.SampleReader ?? this;
+            buffer.SampleReader = _convertingReader;
+
+            return true;
+        }
+
         public override void QueueBuffer(AudioBuffer buffer)
         {
             if (_testProdStall.AtS > 0 && !_testProdStallDone && _started && Stopwatch.GetTimestamp() - _startTicks >= (long)_testProdStall.AtS * Stopwatch.Frequency)
@@ -649,7 +727,25 @@ namespace Ryujinx.Audio.Backends.Apple
                 Thread.Sleep(_testProdStall.Ms);
             }
 
-            ulong sampleCount = GetSampleCount(buffer);
+            // S2Arm (#189): renderer buffers (Data) are copied in by AudioSampleQueue right below, so one staging
+            //   array can be reused; the queue never reads it after Enqueue returns. Guest bytes (6-channel) are
+            //   folded to device bytes (stereo) first; the frame count is unchanged.
+            if (_processor != null && buffer.Data != null)
+            {
+                int frames = buffer.Data.Length / _guestBytesPerFrame;
+                int outputBytes = frames * _bytesPerFrame;
+
+                if (_convertedData == null || _convertedData.Length != outputBytes)
+                {
+                    _convertedData = new byte[outputBytes];
+                }
+
+                _processor.Process(buffer.Data.AsSpan(0, frames * _guestBytesPerFrame), _convertedData);
+                buffer.Data = _convertedData;
+                buffer.DataSize = (ulong)outputBytes;
+            }
+
+            ulong sampleCount = GetFrameCount(buffer);
 
             // S2Arm (11-02): register before its samples can be submitted: submitted samples may count as played at once (PlaybackCredit),
             //   and played samples must find their buffer in _queued
@@ -794,6 +890,8 @@ namespace Ryujinx.Audio.Backends.Apple
                         _audioQueue = nint.Zero;
                     }
 
+                    _processor?.Dispose();   // S2Arm (#189): the explicit downmix stage (AudioConverter) goes with the queue
+
                     // Synchronous queue disposal completes callbacks before their
                     // handle is released. A repeated Dispose cannot free a reused slot.
                     if (_gcHandle.IsAllocated) _gcHandle.Free();
@@ -809,6 +907,71 @@ namespace Ryujinx.Audio.Backends.Apple
         {
             Dispose(true);
             GC.SuppressFinalize(this);
+        }
+
+        // S2Arm (#189): the SampleReader the audio queue uses for guest buffers. It maps the device byte offset
+        //   (stereo after folding) back to the guest stream (6-channel) and folds only the frames the queue asks for.
+        private sealed class ConvertingReader : HardwareDeviceSessionOutputBase
+        {
+            private readonly AppleOutputProcessor _processor;
+            private readonly int _guestBytesPerFrame;
+            private readonly int _deviceBytesPerFrame;
+            private HardwareDeviceSessionOutputBase _inner;
+            private byte[] _scratch = Array.Empty<byte>();
+
+            public ConvertingReader(AppleHardwareDeviceSession owner, AppleOutputProcessor processor)   // 平台例外：Apple 后端平台实现内部的下混读代理（#189）
+                : base(owner.MemoryManager, owner.RequestedSampleFormat, owner.RequestedSampleRate, owner.RequestedChannelCount)
+            {
+                _processor = processor;
+                _guestBytesPerFrame = owner._guestBytesPerFrame;
+                _deviceBytesPerFrame = owner._bytesPerFrame;
+            }
+
+            public HardwareDeviceSessionOutputBase Inner
+            {
+                set => _inner = value;
+            }
+
+            public override void ReadSamples(AudioBuffer buffer, ulong offset, Span<byte> destination)
+            {
+                int frames = destination.Length / _deviceBytesPerFrame;
+                int outputBytes = frames * _deviceBytesPerFrame;
+
+                if (frames == 0)
+                {
+                    destination.Clear();
+
+                    return;
+                }
+
+                int inputBytes = frames * _guestBytesPerFrame;
+
+                if (_scratch.Length < inputBytes)
+                {
+                    _scratch = new byte[inputBytes];
+                }
+
+                ReadOnlySpan<byte> input = _scratch.AsSpan(0, inputBytes);
+                ulong guestOffset = offset / (ulong)_deviceBytesPerFrame * (ulong)_guestBytesPerFrame;
+
+                _inner.ReadSamples(buffer, guestOffset, _scratch.AsSpan(0, inputBytes));
+                _processor.Process(input, destination[..outputBytes]);
+
+                if (destination.Length > outputBytes)
+                {
+                    destination[outputBytes..].Clear();
+                }
+            }
+
+            public override void Dispose() => throw new NotSupportedException();
+            public override void PrepareToClose() => throw new NotSupportedException();
+            public override void QueueBuffer(AudioBuffer buffer) => throw new NotSupportedException();
+            public override void SetVolume(float volume) => throw new NotSupportedException();
+            public override float GetVolume() => throw new NotSupportedException();
+            public override void Start() => throw new NotSupportedException();
+            public override void Stop() => throw new NotSupportedException();
+            public override ulong GetPlayedSampleCount() => throw new NotSupportedException();
+            public override bool WasBufferFullyConsumed(AudioBuffer buffer) => throw new NotSupportedException();
         }
     }
 }

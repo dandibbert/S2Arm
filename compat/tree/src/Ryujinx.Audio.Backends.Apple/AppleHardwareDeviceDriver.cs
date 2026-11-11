@@ -40,7 +40,7 @@ namespace Ryujinx.Audio.Backends.Apple
             bool ch2 = all || Environment.GetEnvironmentVariable("S2A_AUDIO_CH2") == "1";
             bool solo = all || Environment.GetEnvironmentVariable("S2A_AUDIO_SOLO") == "1";
             bool io20 = all || Environment.GetEnvironmentVariable("S2A_AUDIO_IO20") == "1";
-            _supportSurroundConfiguration = !ch2 && TestSurroundSupport();
+            _supportSurroundConfiguration = !ch2 && TestSurroundSupport(AppleOutputModeSelector.FromEnvironment());
             if (ch2) Console.Error.WriteLine("[S2A 声音] 只报 2 声道（S2A_AUDIO_CH2 / STEREO）");
             if (solo || io20) S2AConfigureSession(solo, io20);
 
@@ -132,11 +132,14 @@ namespace Ryujinx.Audio.Backends.Apple
         private static readonly ProbeCallback _probeCallback = static (_, _, _) => { };
 
         // S2Arm（#189）：试建成功不等于设备真能出 5.1——2 声道内置扬声器上 6 声道队列照样试建成功，后端就上报
-        //   6 声道，渲染器出 6 声道 PCM、运行期队列又没有声明布局，系统隐式 6→2 只复制 FL/FR，中置（对白）
+        //   6 声道，渲染器出 6 声道 PCM、运行期队列又没有声明声道布局，系统隐式 6→2 只复制 FL/FR，中置（对白）
         //   与环绕整段丢失。改为读队列关联设备的真实输出声道数（kAudioQueueDeviceProperty_NumberChannels，
         //   与 HAL 一致：DisplayPort 显示器 6、内置扬声器 2），不足 6 声道就上报立体声，由游戏 / 渲染器按
-        //   自己的系数下混；真 5.1 设备的运行期 6 声道队列声明布局在会话侧（AppleHardwareDeviceSession.CreateQueue）
-        private bool TestSurroundSupport()
+        //   自己的系数下混；真 5.1 设备的运行期 6 声道队列声明布局在会话侧（AppleHardwareDeviceSession.CreateQueue）。
+        //   例外：S2A_AUDIO_OUT=sys / matrix 显式下混时照报 5.1——渲染器的回落下混不归一化（六路全 0.9 折到 2.399、
+        //   3484/4800 采样削波），显式下混让 6 声道混音进会话、由系统 AudioConverter 归一化折叠（不削波）；
+        //   S2A_AUDIO_CH2 / STEREO 仍然优先强制立体声
+        private bool TestSurroundSupport(AppleOutputMode outMode)
         {
             try
             {
@@ -181,6 +184,14 @@ namespace Ryujinx.Audio.Backends.Apple
                     {
                         Console.Error.WriteLine($"[S2A 声音] 【红】读输出设备声道数失败：{channelsResult}（按立体声上报）");
                         return false;
+                    }
+
+                    // S2Arm（#189）：显式下混例外——用户明确要系统 AudioConverter 折成立体声（归一化不削波），
+                    //   照报 5.1 让 6 声道混音进会话，由会话折叠；真 5.1 设备上同样按显式要求折叠（A/B 对拍）
+                    if (outMode != AppleOutputMode.Native)
+                    {
+                        Console.Error.WriteLine($"[S2A 声音] 输出设备 {deviceChannels} 声道：S2A_AUDIO_OUT 显式下混（{AppleOutputModeSelector.ModeName(outMode)}）——照报 5.1，6 声道会话在会话侧折成立体声（5.1 布局设置 rc={layoutResult}，折叠后队列是 2 声道）");
+                        return true;
                     }
 
                     if (deviceChannels >= 6 && layoutResult == 0)

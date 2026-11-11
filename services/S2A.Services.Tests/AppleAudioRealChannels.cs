@@ -76,10 +76,13 @@ namespace S2A.Services.Tests
                 //   真 5.1 设备照报 6（不降混）。换算不依赖本机设备，两声道数同源同断言
                 string oldCh2 = Environment.GetEnvironmentVariable("S2A_AUDIO_CH2");
                 string oldStereo = Environment.GetEnvironmentVariable("S2A_AUDIO_STEREO");
+                // S2A_AUDIO_OUT=sys 显式下混会照报 5.1（#189 后续）：这里测的是缺省上报，先隔离它
+                string oldOut = Environment.GetEnvironmentVariable("S2A_AUDIO_OUT");
                 try
                 {
                     Environment.SetEnvironmentVariable("S2A_AUDIO_CH2", null);
                     Environment.SetEnvironmentVariable("S2A_AUDIO_STEREO", null);
+                    Environment.SetEnvironmentVariable("S2A_AUDIO_OUT", null);
 
                     using AppleHardwareDeviceDriver driver = new();   // 平台例外：本用例只测 Apple 音频后端（#189），只在 macOS 上跑
                     bool supports6 = driver.SupportsChannelCount(6);
@@ -87,16 +90,18 @@ namespace S2A.Services.Tests
                         $"设备 {deviceChannels} 声道、SupportsChannelCount(6)={supports6}（期望 {deviceChannels >= 6}）");
                     Check("2 声道始终上报", driver.SupportsChannelCount(2));
 
-                    // ④ S2A_AUDIO_CH2=1 仍强制立体声（既有减法开关不受影响）
+                    // ④ S2A_AUDIO_CH2=1 仍强制立体声（既有减法开关不受影响；显式下混也让位于它）
                     Environment.SetEnvironmentVariable("S2A_AUDIO_CH2", "1");
+                    Environment.SetEnvironmentVariable("S2A_AUDIO_OUT", "sys");
                     using AppleHardwareDeviceDriver forced = new();   // 平台例外：本用例只测 Apple 音频后端（#189），只在 macOS 上跑
-                    Check("S2A_AUDIO_CH2=1 强制立体声",
+                    Check("S2A_AUDIO_CH2=1 强制立体声（sys 显式下混也让位）",
                         !forced.SupportsChannelCount(6) && forced.SupportsChannelCount(2));
                 }
                 finally
                 {
                     Environment.SetEnvironmentVariable("S2A_AUDIO_CH2", oldCh2);
                     Environment.SetEnvironmentVariable("S2A_AUDIO_STEREO", oldStereo);
+                    Environment.SetEnvironmentVariable("S2A_AUDIO_OUT", oldOut);
                 }
             }
 
