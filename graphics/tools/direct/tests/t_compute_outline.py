@@ -11,17 +11,17 @@ import tempfile
 import dshfn
 
 HERE = Path(__file__).resolve().parent
-HEADER = "#include <metal_stdlib>\nusing namespace metal;\n"
+HEADER = "#include <metal_stdlib>\nusing namespace metal;\nstruct Scratch { uint words[32]; };\n"
 SIGNATURE = "kernel void main0(device uint* dst [[buffer(0)]], uint gid [[thread_position_in_grid]])\n"
 
 
 def shader(extra="", operations=130, blocks=64):
-    body = ["    uint acc = gid + 1u;", "    const uint step = 3u;"]
+    body = ["    threadgroup Scratch shared;", "    Scratch local = {};", "    uint acc = gid + 1u;", "    const uint step = 3u;"]
     for i in range(blocks):
         body += [f"    if ((gid & 3u) != {i % 4}u)", "    {"]
         body += ["        acc = acc * 1664525u + 1013904223u + step;"] * operations
-        body += ["        dst[gid] = acc;", "    }"]
-    return HEADER + SIGNATURE + "{\n" + extra + "\n".join(body) + "\n    dst[gid] = acc;\n}\n"
+        body += ["        local.words[0] = acc;", "        shared.words[gid & 31u] = local.words[0];", "        acc = shared.words[gid & 31u];", "        dst[gid] = acc;", "    }"]
+    return HEADER + SIGNATURE + "{\n" + extra + "\n".join(body) + "\n    threadgroup_barrier(mem_flags::mem_threadgroup);\n    dst[gid] = acc;\n}\n"
 
 
 cases = [
@@ -32,7 +32,8 @@ cases = [
     shader().replace("    const uint step = 3u;", "    const uint step = 3u;\n    volatile uint unsupported = 0u;"),
     shader().replace("    const uint step = 3u;", "    const uint step = 3u;\n    uint acc = 5u;"),
     shader().replace("    const uint step = 3u;", "    const uint step = 3u;\n    dst = dst + 1;"),
-    shader().replace("    const uint step = 3u;", "    const uint step = 3u;\n    // braces in a comment { }\n"),
+    shader().replace("    const uint step = 3u;", "    const uint step = 3u;\n    /* block comments are outside the accepted dialect */\n"),
+    shader().replace("        dst[gid] = acc;", '        // braces and strings in a comment: " { } return\n        dst[gid] = acc;'),
 ]
 results = dshfn.batch([("giant_fix", [source]) for source in cases])
 outputs = [result.get("ok", [None])[0] for result in results]
@@ -51,12 +52,14 @@ check("large compute entry is outlined through the production GiantFix seam", "s
 check("all disjoint closed bodies extracted", out.count("static __attribute__((noinline)) void s2a_outline_") == 64)
 check("mutable thread scalar remains a reference", "thread uint& acc" in out)
 check("constant scalar qualifier retained", "thread const uint& step" in out)
+check("threadgroup and private aggregate storage remains by reference", "threadgroup Scratch& shared" in out and "thread Scratch& local" in out)
 check("entry signature and dispatch attributes unchanged", SIGNATURE in out)
 check("small shader unchanged byte for byte", outputs[1] == cases[1])
 for i, name in enumerate(("exits", "barriers", "unknown declarations", "shadowed locals", "reassigned buffer pointers", "comment syntax"), 2):
     check(name + " are not outlined", outputs[i] == cases[i])
 again = dshfn.fn("giant_fix", out)[0] if out else ""
 check("transformation is idempotent", out == again)
+check("line comments do not affect lexical scope or exit detection", outputs[8] is not None and "static __attribute__((noinline)) void s2a_outline_0(" in outputs[8] and '// braces and strings in a comment: " { } return' in outputs[8])
 
 if not bad:
     with tempfile.TemporaryDirectory(prefix="compute_outline_") as temp:

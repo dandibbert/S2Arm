@@ -60,10 +60,12 @@ namespace S2A.Dsh
         public static string Compute(string msl)
         {
             if (msl.Length < KernelLines || msl.Contains("s2a_outline_", StringComparison.Ordinal)) return msl;
-            var lines = msl.Split('\n'); int entry = -1; Match signature = Match.Empty;
+            var lines = msl.Split('\n');
+            var code = lines.Select(line => line.Contains("//", StringComparison.Ordinal) ? line[..line.IndexOf("//", StringComparison.Ordinal)] : line).ToArray();
+            int entry = -1; Match signature = Match.Empty;
             for (int i = 0; i < lines.Length; i++)
             {
-                var m = Entry.Match(lines[i]);
+                var m = Entry.Match(code[i].TrimEnd());
                 if (!m.Success) continue;
                 if (entry >= 0) return msl;
                 entry = i; signature = m;
@@ -92,13 +94,13 @@ namespace S2A.Dsh
             int end = -1;
             for (int i = entry + 2; i < lines.Length; i++)
             {
-                string s = lines[i].Trim();
-                // Generated sources need no strings, comments or directives inside an entry.
+                string s = code[i].Trim();
+                // Generated sources need no strings, block comments or directives inside an entry.
                 // Reject instead of interpreting braces/identifiers inside another language construct.
-                if (s.Contains("//", StringComparison.Ordinal) || s.Contains("/*", StringComparison.Ordinal) || s.Contains('"') || s.StartsWith('#')) return msl;
+                if (s.Contains("/*", StringComparison.Ordinal) || s.Contains('"') || s.StartsWith('#')) return msl;
                 if (s == "{")
                 {
-                    var b = new Block { Start = i, Parent = current, Conditional = lines[i - 1].TrimStart().StartsWith("if (", StringComparison.Ordinal) };
+                    var b = new Block { Start = i, Parent = current, Conditional = code[i - 1].TrimStart().StartsWith("if (", StringComparison.Ordinal) };
                     current.Children.Add(b); blocks.Add(b); current = b; continue;
                 }
                 if (s == "}" || s.StartsWith("} while (", StringComparison.Ordinal))
@@ -122,7 +124,7 @@ namespace S2A.Dsh
                 if (s.Contains('{') || s.Contains('}')) return msl;
             }
             if (end < 0 || end - entry < KernelLines) return msl;
-            string body = string.Join("\n", lines[(entry + 2)..end]);
+            string body = string.Join("\n", code[(entry + 2)..end]);
             foreach (var v in variables.Values.Where(v => v.Type.EndsWith('*')))
                 if (Regex.IsMatch(body, @"\b" + Regex.Escape(v.Name) + @"\s*(?:=(?!=)|\+=|-=|\+\+|--)") || Regex.IsMatch(body, @"(?:\+\+|--)\s*\b" + Regex.Escape(v.Name) + @"\b")) return msl;
             var sharedLocals = variables.Values.Where(v => Regex.IsMatch(v.Type, @"\bthreadgroup\b")).ToList();
@@ -130,7 +132,7 @@ namespace S2A.Dsh
             foreach (var b in blocks.Where(b => b.Conditional && b.End - b.Start > MinLines && b.End - b.Start <= MaxLines + 1).OrderByDescending(b => b.End - b.Start).ThenBy(b => b.Start))
             {
                 if (selected.Any(x => b.Start < x.B.End && x.B.Start < b.End)) continue;
-                string text = string.Join("\n", lines[(b.Start + 1)..b.End]);
+                string text = string.Join("\n", code[(b.Start + 1)..b.End]);
                 if (Exit.IsMatch(text)) continue;
                 if (sharedLocals.Any(v => v.Line > b.Start && v.Line < b.End)) continue;
                 var captures = new Dictionary<string, Variable>(StringComparer.Ordinal); bool valid = true;
