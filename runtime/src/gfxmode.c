@@ -5,6 +5,7 @@
 // 弱链接[host]：s2a_vk_entry（直连图形层 graphics/nvn 提供；链接行按这行放行未定义，runtime/build.mk 自动收）
 // 弱链接[host]：s2a_vk_lib_ready（直连图形层 graphics/nvn 提供；链接行按这行放行未定义，runtime/build.mk 自动收）
 // 弱链接[host]：s2a_gl_entry（直连图形层 graphics/nvn 提供；链接行按这行放行未定义，runtime/build.mk 自动收）
+// 弱链接[host]：s2a_gl_stub（直连图形层 graphics/nvn 提供；链接行按这行放行未定义，runtime/build.mk 自动收）
 // 弱链接[host]：s2a_gl_lib_ready（直连图形层 graphics/nvn 提供；链接行按这行放行未定义，runtime/build.mk 自动收）
 // 弱链接[host]：s2a_vi_entry（直连图形层 graphics/nvn 提供；链接行按这行放行未定义，runtime/build.mk 自动收）
 // 弱链接[host]：s2a_nv_entry（直连图形层 graphics/nvn 提供；链接行按这行放行未定义，runtime/build.mk 自动收）
@@ -189,6 +190,7 @@ void *s2a_nvn_bootstrap_entry(void) __attribute__((weak_import));   // graphics/
 void *s2a_vk_entry(const char *name) __attribute__((weak_import));          // graphics/nvn/host_adapt.m：Vulkan 款的 vk* 导入（直连层 hle_vk，已套切栈桩）
 void *s2a_vi_entry(const char *name) __attribute__((weak_import));          // graphics/nvn/host_adapt.m：游戏导入的 nn::vi 显示层函数（SetLayerCrop：上屏区域）
 void *s2a_gl_entry(const char *name) __attribute__((weak_import));          // graphics/nvn/host_adapt.m：egl* / gl* 导入（graphics/nvn/gfx/gl，重活已套切栈桩）
+void *s2a_gl_stub(const char *name) __attribute__((weak_import));           // graphics/nvn/host_adapt.m：没实现的 GL 核心名的安全空实现（装载器找遍之后才要）
 void *s2a_nv_entry(const char *name) __attribute__((weak_import));          // graphics/nvn/gfx/nvn/nvn2.c：Switch 2 游戏导入的 nv::（GPU 驱动启动层）、gsv 与其他依赖 gs 启动的命名空间；Switch 1 恒回 NULL
 // graphics/nvn/gfx/nvn/nvn2_codec.c：Switch 2 游戏导入的 nn::codec 视频解码器 / 图像池、nn::syncpt::sdk、nn::gs、NVN2 原生图像（真机走 gsv 服务）；Switch 1 恒回 NULL
 void *s2a_codec_entry(const char *name) __attribute__((weak_import));
@@ -200,7 +202,7 @@ uint64_t s2a_direct_lookup(const char *name) {
     //   （gpu_drivers.tsv，profile_guess.gpu_driver_modules），原路径不存在，不交给 GL 层就是装载期未解析、一调即中止。
     //   OpenGL 款（main 导入 egl*、经 eglGetProcAddress 取 gl*）如此；在 GL 里画一部分画面的 NVN 款也如此（火影：Scaleform 建无表面的 EGL 上下文、
     //   经 eglGetProcAddress 取 gl* 画界面，再经 nvnTextureBuilderSetGLTextureName / nvnSyncInitializeFromFencedGLSync 交给 NVN）。
-    //   层里没实现的名字（如马车8 的 glslc*）回 0，照原路径找
+    //   层里没实现的名字回 0，照原路径找（马车8 / #601 的 glslc* 由游戏自己的模块导出）；原路径也没有的核心名由 s2a_direct_stub 给安全空实现
     if (!strncmp(name, "egl", 3) || !strncmp(name, "gl", 2)) { if (!s2a_gl_entry) die("图形模式是直连，但本宿主没链直连图形层（graphics/nvn）"); return (uint64_t)s2a_gl_entry(name); }
     if ((!strncmp(name, "_ZN2nn2vi", 9) || !strncmp(name, "_ZNK2nn2vi", 10)) && s2a_vi_entry) { void *f = s2a_vi_entry(name); if (f) return (uint64_t)sw_xstack_wrap(name, f); }   // 显示层裁切等：直连上屏要知道（真机 SDK 推给系统窗口）
     // Switch 2 的 SDK 接管层（游戏自带 NVN2 驱动 / nn::gs / gsv 直连档不启动，依赖它们的 sdk 函数由宿主答）：C++ 名与 NVIDIA 驱动的 C 名（Nv*）都问两个入口，
@@ -214,4 +216,11 @@ uint64_t s2a_direct_lookup(const char *name) {
     if (strcmp(name, "nvnBootstrapLoader")) return 0;
     if (!s2a_nvn_bootstrap_entry) die("图形模式是直连，但本宿主没链直连图形层（graphics/nvn）");
     return (uint64_t)sw_xstack_wrap(name, s2a_nvn_bootstrap_entry());
+}
+// 装载器（loader.c relocate）对 s2a_direct_lookup、游戏模块、libc、romfs NRO 都找不到的导入最后问一次：直连模式下 gl* 核心名交安全空实现
+//   （GL 驱动模块不装，游戏按报的 GL 版本直接调，留未解析就是一调即中止）；其余名字、通用模式回 0。
+//   空实现只能在找遍之后给：放进 s2a_direct_lookup 会先于游戏模块，游戏自己导出的同名函数被什么都不做的空实现顶掉（#601 glslc*）
+uint64_t s2a_direct_stub(const char *name) {
+    if (s2a_gfx_mode() != S2A_GFX_DIRECT || strncmp(name, "gl", 2) || !s2a_gl_stub) return 0;
+    return (uint64_t)s2a_gl_stub(name);
 }

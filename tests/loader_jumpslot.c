@@ -27,6 +27,7 @@ uint64_t s2a_far_bind(const char *name, uint64_t v) {
     return v;
 }
 void *s2a_libc_lookup(const char *name) { (void)name; return NULL; }
+uint64_t s2a_direct_stub(const char *name) { (void)name; return 0; }   // gfxmode.c 的替身：找遍之后的 GL 空实现，本测不涉及
 void *sw_xstack_wrap(const char *name, void *fn) { (void)name; return fn; }
 int s2a_loader_store64(uint64_t *where, uint64_t v) { *where = v; return 0; }   // svc_mem.c 的装载器写入口（本测不链 svc_mem.c；页可写时生产实现也是直接写）
 int s2a_gfx_mode(void) { return 0; }

@@ -367,6 +367,9 @@ static int jump_slot_addend(void) {
 }
 void s2a_nro_table_load(const char *dir); const char *s2a_nro_defer_lookup(const char *name);   // nrodefer.c：romfs NRO 导出表
 uint64_t s2a_direct_lookup(const char *name);
+#if !defined(__ANDROID__)
+uint64_t s2a_direct_stub(const char *name);   // gfxmode.c：找遍之后，直连模式下 gl* 核心名的安全空实现
+#endif
 static uint64_t resolve_global(const char *name) {   // 按装载顺序找已装模块里的定义（ELF 缺省语义 = Horizon rtld）
     for (int i = 0; i < g_nmod; i++) { void *p = module_sym(&g_mod[i], name); if (p) return (uint64_t)p; }
     return 0;
@@ -482,6 +485,9 @@ static void relocate(module_t *m) {
                 v = s2a_direct_lookup(nm);   // 直连模式（gfxmode.c）：游戏导入的 nvnBootstrapLoader 解析到直连图形层；通用模式恒 0，走下面原路径
                 if (!v) v = resolve_global(nm);
                 if (!v) { void *f = s2a_libc_lookup(nm); if (f) { v = (uint64_t)sw_xstack_wrap(nm, f); nlibc++; } }
+#if !defined(__ANDROID__)   // 安卓没有直连 GL 层（s2a_direct_lookup 在 android/native 自给）
+                if (!v && !s2a_nro_defer_lookup(nm)) v = s2a_direct_stub(nm);   // 都没定义（romfs NRO 也没有）的 gl* 核心名：安全空实现，放最后免得顶掉游戏模块自己的定义（#601）
+#endif
                 if (!v && (s->st_info >> 4) == 2) { nweak0++; *where = type == R_AARCH64_JUMP_SLOT ? 0 : (uint64_t)r->r_addend; cnt[type == R_AARCH64_JUMP_SLOT ? 2 : 1]++; continue; }   // 无定义弱符号 = 0（ELF / rtld 语义）
                 if (!v) {   // 游戏自带 NRO（romfs/nro）的导出：Horizon 上要等 nn::ro 装进来才解析，记普通日志不计红；桩不变，真被调到照旧报红中止
                     const char *nro = s2a_nro_defer_lookup(nm);

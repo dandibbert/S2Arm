@@ -59,8 +59,8 @@ __attribute__((used)) static const char *const gl_slices[] = {&gl_slice_egl, &gl
 //   iOS 当场按代码签名杀掉（小丑牌 v0.2.6 玩家 iPhone 5 次起局都这样）。交一个预编好的空实现：第一次调用打红点名、回 0，
 //   日志直接看出游戏用了哪个，再给真实现。扩展函数照旧回空（GL 允许取不到，程序常按指针判支持）
 // 核心名 = 「gl」紧跟大写字母（glBindTexture …）且结尾不是两个以上大写的厂商后缀。「gl」后跟小写的不是 GL 函数：NVN 的 GLSL 编译库
-//   glslcInitialize / glslcSetAllocator / glslcCompile … 由游戏自己的模块导出，装载器只在这里回空时才去游戏模块找——交了空实现，游戏拿到的是什么都不做的
-//   函数，首帧前就退出（#601：0100C87006310000，v0.2.8 回归，978191cd 只看「gl」前缀）
+//   glslcInitialize / glslcSetAllocator / glslcCompile … 由游戏自己的模块导出（#601：0100C87006310000，v0.2.8 回归，978191cd 只看「gl」前缀）。
+//   空实现按调用来源给（gl_stub）：查表 gl_lookup 只回真实现，装载器在游戏模块 / libc / NRO 都没定义时才要空实现，eglGetProcAddress 查表没有时才要
 static int gl_core_name(const char *n) {
     size_t l = strlen(n), u = 0; while (u < l && n[l - 1 - u] >= 'A' && n[l - 1 - u] <= 'Z') u++;
     return u < 2 && !strncmp(n, "gl", 2) && n[2] >= 'A' && n[2] <= 'Z';
@@ -98,21 +98,31 @@ void *gl_lookup(const char *name) {
     static const char *seen[4096]; static int nseen; static pthread_mutex_t mu = PTHREAD_MUTEX_INITIALIZER;
     pthread_mutex_lock(&mu);
     int known = 0; for (int i = 0; i < nseen; i++) if (!strcmp(seen[i], name)) { known = 1; break; }
-    const char *how = fn ? "宿主实现" : "没有（回空）";
-    if (!fn && gl_core_name(name)) {   // 同一个名字再查给同一个空实现
-        static int nmiss; int i = 0; while (i < nmiss && strcmp(g_gl_miss_name[i], name)) i++;
-        if (i == nmiss && nmiss < GL_MISS_N) { g_gl_miss_name[nmiss] = strdup(name); nmiss++; }
-        if (i < nmiss) { fn = g_gl_miss_fn[i]; how = "没有（核心函数，交空实现）"; }
-        else { fn = (void *)gl_miss_shared; how = "没有（核心函数，交共用空实现）"; }
-    }
-    if (!known && nseen < 4096) { seen[nseen++] = strdup(name); GLOG("lookup %s → %s", name, how); }
+    if (!known && nseen < 4096) { seen[nseen++] = strdup(name); GLOG("lookup %s → %s", name, fn ? "宿主实现" : "没有（回空）"); }
     pthread_mutex_unlock(&mu);
+    return fn;
+}
+// 没实现的核心名的安全空实现（同一个名字再要给同一个）；不是核心名回空。只在调用方已经找遍真实现之后才要：
+//   eglGetProcAddress（游戏运行时按名要 GL 函数）查表没有时；装载器解析导入时直连层 → 游戏模块 → libc → romfs NRO 都没有定义时（loader.c relocate）。
+//   查表（gl_lookup）本身不交空实现：装载器先问直连层，层里交了空实现，游戏模块自己导出的同名函数就永远轮不到（#601 glslc* 的病根）
+void *gl_stub(const char *name) {
+    if (!name || !gl_core_name(name)) return NULL;
+    static pthread_mutex_t mu = PTHREAD_MUTEX_INITIALIZER; static int nmiss;
+    pthread_mutex_lock(&mu);
+    int i = 0; while (i < nmiss && strcmp(g_gl_miss_name[i], name)) i++;
+    const int fresh = i == nmiss;
+    if (fresh && nmiss < GL_MISS_N) { g_gl_miss_name[nmiss] = strdup(name); nmiss++; }
+    void *fn = i < nmiss ? g_gl_miss_fn[i] : (void *)gl_miss_shared;
+    pthread_mutex_unlock(&mu);
+    if (fresh) GLOG("stub %s → 没有（核心函数，交%s空实现）", name, i < GL_MISS_N ? "" : "共用");
     return fn;
 }
 void *sw_xstack_wrap(const char *name, void *fn);   // S2Arm 宿主：在宿主栈上跑的切栈桩（单测给替身）
 int gl_is_big(const char *name);
 // 交给游戏的入口（装载器解析的导入、eglGetProcAddress 交出的指针同一条路）：查表，重活（swglb 登记的）套切栈桩
 void *gl_entry(const char *name) { void *fn = gl_lookup(name); return fn && gl_is_big(name) ? sw_xstack_wrap(name, fn) : fn; }
+// eglGetProcAddress 交出的：真实现（同 gl_entry），没有时核心名给安全空实现（游戏按报的 GL 版本直接调，回空就跳到地址 0）
+void *gl_entry_or_stub(const char *name) { void *fn = gl_entry(name); return fn ? fn : gl_stub(name); }
 // __DATA,swglb：要跑在宿主栈上的名字（适配层交给游戏前套切栈桩）
 int gl_is_big(const char *name) {
     static const char *const *sec; static unsigned long sz;

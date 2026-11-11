@@ -345,6 +345,6 @@ GLB(eglSwapBuffers, EGLBoolean, EGLDisplay d, EGLSurface sf) { @autoreleasepool 
     if (f > 9) { double a = nvn_be_presented_time(f - 8), b = nvn_be_presented_time(f - 9); dm_perf_present(a < 0 ? -1 : a > 0 && b > 0 ? (a - b) * 1e3 : 0); }   // 同 Vulkan 层：上屏序号即票号
     return 1;
 }}
-GL(eglGetProcAddress, void *, const char *name) { return gl_entry(name); }   // 重活套切栈桩（gl_core.m），同装载器解析的导入
+GL(eglGetProcAddress, void *, const char *name) { return gl_entry_or_stub(name); }   // 重活套切栈桩（gl_core.m）；没实现的核心名给安全空实现
 // 松开本线程的当前上下文与表面（EGL 1.5 §3.11：同 eglMakeCurrent 全空），错误码 / API 回初值；已删的此时才放
 GLB(eglReleaseThread, EGLBoolean, void) { @autoreleasepool { bind_current(NULL, NULL); g_api = EGL_OPENGL_ES_API; g_err = EGL_SUCCESS; return 1; }}

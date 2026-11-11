@@ -412,7 +412,7 @@ void *s2a_vk_entry(const char *name) {
 }
 
 // 直连模式下装载器解析 egl* / gl* 导入（runtime/src/gfxmode.c：OpenGL 款，以及在 GL 里画一部分画面的 NVN 款）：回实现地址（重活已套切栈桩），没有回 NULL。
-void *gl_entry(const char *name);   // graphics/nvn/gfx/gl/gl_core.m：查表 + 重活套切栈桩（eglGetProcAddress 交出的也走它）
+void *gl_entry(const char *name);   // graphics/nvn/gfx/gl/gl_core.m：查表 + 重活套切栈桩，只回真实现（没实现的核心名由 s2a_gl_stub 在装载器找遍之后给）
 // 游戏第一次真正进 EGL（eglGetDisplay，graphics/nvn/gfx/gl/egl.m）时定着色器库路径（DM_MSL_DIR = <游戏数据>/shaders/direct，GL 库在其下 gl/）、起直连异常看门：
 //   同 NVN 的 direct_bootstrap、Vulkan 的 vkCreateInstance。不在重定位期做：iOS 上 S2A_GAME_DATA 由 host_main.c 在装载之后才设，
 //   重定位期读到空会误报「着色器库找不到」（10-25 测试设备2 数码宝贝 GL 直连首包）
@@ -428,6 +428,9 @@ void *s2a_gl_entry(const char *name) {
     if (fn && !hit) { hit = 1; LOG("直连：egl* / gl* 导入解析到 graphics/nvn/gfx/gl（首个 %s）", name); }
     return fn;
 }
+// 装载器找遍直连层 / 游戏模块 / libc / romfs NRO 都没定义的 gl* 导入（runtime/src/gfxmode.c s2a_direct_stub）：核心名给安全空实现，其余回 NULL
+void *gl_stub(const char *name);   // graphics/nvn/gfx/gl/gl_core.m
+void *s2a_gl_stub(const char *name) { return gl_stub(name); }
 
 // 直连帧数 / 每帧绘制数：NVN 层与 Vulkan 层各自计数，一局只有一层出帧，相加即本局的数（只数 NVN 时 Vulkan 款起局 90 秒就被看门判「没出首帧」）
 void dm_vk_stats(uint64_t *frames, uint64_t *draws, uint64_t *passes);   // graphics/nvn/gfx/vk/hle_vk.m
