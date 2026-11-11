@@ -185,7 +185,7 @@ ios: ios-ns2pro
 	  /usr/bin/plutil -insert UIFileSharingEnabled -bool YES $(IOS_APP)/Info.plist; \
 	  /usr/bin/plutil -insert LSSupportsOpeningDocumentsInPlace -bool YES $(IOS_APP)/Info.plist; \
 	  /usr/bin/plutil -insert UIApplicationShortcutItems -json "$$(cat ios/shortcuts.json)" $(IOS_APP)/Info.plist; \
-	  /usr/bin/plutil -insert CFBundleLocalizations -json '["en","zh-Hans","ja","de","fr","it","sv"]' $(IOS_APP)/Info.plist; \
+	  /usr/bin/plutil -insert CFBundleLocalizations -json '["en","en-GB","zh-Hans","zh-Hant","ja","ko","fr","fr-CA","de","it","es","es-419","pt","pt-BR","nl","ru","pl","th","sv"]' $(IOS_APP)/Info.plist; \
 	  /usr/bin/plutil -insert CFBundleDevelopmentRegion -string en $(IOS_APP)/Info.plist; \
 	  for k in UISupportedInterfaceOrientations UISupportedInterfaceOrientations~ipad; do /usr/bin/plutil -insert $$k -xml '<array><string>UIInterfaceOrientationLandscapeRight</string><string>UIInterfaceOrientationLandscapeLeft</string></array>' $(IOS_APP)/Info.plist; done; \
 	  /usr/bin/plutil -insert UIRequiresFullScreen -bool YES $(IOS_APP)/Info.plist; /usr/bin/plutil -insert UIStatusBarHidden -bool YES $(IOS_APP)/Info.plist   # 只许横屏、全屏、无状态栏
