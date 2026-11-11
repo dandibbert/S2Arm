@@ -529,12 +529,22 @@ namespace S2A.Services
                         long at = _imageOffset[_ref[i]] + inner;
                         Span<byte> left = destination[..count];
 
-                        while (!left.IsEmpty)
+                        try
                         {
-                            int got = RandomAccess.Read(_image, left, at);
-                            if (got <= 0) return ResultFs.HostFileDataCorrupted.Value;
-                            left = left[got..];
-                            at += got;
+                            while (!left.IsEmpty)
+                            {
+                                int got = RandomAccess.Read(_image, left, at);
+                                if (got <= 0) return ResultFs.HostFileDataCorrupted.Value;
+                                left = left[got..];
+                                at += got;
+                            }
+                        }
+                        catch (IOException e) when (e.HResult == LazyHostFile.EFault)
+                        {
+                            // 目标是游戏内存、读盘期间页被写保护：内核往里写直接 EFAULT（#602：iPad 读 romfs.img「Bad address」→ 游戏 Break 退出）。
+                            //   同目录布局（LazyHostFile）那条：剩下的部分先读进宿主中转缓冲、报一次写再拷
+                            if (!LazyHostFile.ReadViaBounce(_image, left, at, "RomFS 镜像", out long got) || got != left.Length)
+                                return ResultFs.HostFileDataCorrupted.Value;
                         }
                     }
                     else if (_ref[i] >= 0)
