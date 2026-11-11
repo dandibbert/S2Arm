@@ -333,8 +333,13 @@ def probe(c):
                     models=[], osChoices=[])
     env = c.env()
     try:
-        # 带上连接方式（wired / tunnel）：连着多台时出包页列出来让玩家选（#272），默认有线那台
-        return dict(connected=[] if c.r.get("quick") else connected(c, with_link=True), models=models(env["DEVELOPER_DIR"]), osChoices=os_choices(env))
+        # 带上连接方式（wired / tunnel）：连着多台时出包页列出来让玩家选（#272），默认有线那台。
+        #   读不到设备列表（超时 / 组件没装好）时 connectedError 带原因：界面说「读不到」而不是「没插」——玩家插着线却被说没看到 iPhone（11-11 玩家反馈）
+        rows, why = [], ""
+        if not c.r.get("quick"):
+            devices, why, _, _ = device_list(c)
+            rows = [_row(d, env["DEVELOPER_DIR"], True) for d in devices if _keep_device(d)]
+        return dict(connected=rows, connectedError=why, models=models(env["DEVELOPER_DIR"]), osChoices=os_choices(env))
     except TargetError as e:
         from core import Failure
         raise Failure(str(e), code=e.code) from e

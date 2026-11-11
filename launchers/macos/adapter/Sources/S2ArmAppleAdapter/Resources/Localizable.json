@@ -5704,8 +5704,24 @@
   "en": "Open Xcode → Settings → Accounts, click “+” at the bottom left, and sign in with your Apple ID (a free one works)."
  },
  {
+  "source": "手机上已经有一个用别的签名装的 S2Arm（包名相同、签名不同），系统不让覆盖。二选一：继续用你原来的签名工具更新它；或者在 iPhone 上长按 S2Arm 删掉它（里面的存档会一起删，先在 S2Arm 里导出存档），再点「装到 iPhone」。",
+  "en": "Your iPhone already has an S2Arm installed with a different signature (same app ID, different signer), and iOS won't replace it. Either keep updating it with your own signing tool, or long-press S2Arm on the iPhone and delete it (its saves go with it, so export them in S2Arm first), then click Install to iPhone again."
+ },
+ {
+  "source": "这个包名之前被别的签名用过（多半是你自己签名装 S2Arm 时用了同一个包名），这次已自动换成新包名装好。手机上可能有两个 S2Arm：新装的这个里有这台电脑装的游戏；旧的那个不再需要的话可以删掉（先导出存档）。",
+  "en": "This app ID was already used by another signature (most likely when you signed S2Arm yourself with the same app ID), so it was installed under a new app ID automatically. You may see two S2Arm apps on your iPhone: the new one has the games from this computer; delete the old one if you no longer need it (export its saves first)."
+ },
+ {
   "source": "iPhone 已用数据线连上",
   "en": "iPhone connected with a cable"
+ },
+ {
+  "source": "iPhone 通过同一网络连着（没插数据线）",
+  "en": "iPhone connected over the same network (no cable)"
+ },
+ {
+  "source": "能装，但网络传资源包慢、容易断：插上数据线再装更稳。",
+  "en": "Installing works, but sending game data over the network is slow and can drop. Plug in a cable for a steadier install."
  },
  {
   "source": "连着不止一台 iPhone / iPad：只留要装的那一台。",

@@ -67,6 +67,7 @@ EXPLAIN = (
     (r'app id limit|\b10 app ids\b|maximum number of app ids|(?:error|code)\D{0,20}\b9120\b', 'free_appid_limit'),
     (r'maximum number of (installed )?apps\b|\b3 apps\b', 'free_app_limit'),   # 11-06 plumesign 原文是「maximum number of installed apps」
     (r'(?:error|code)\D{0,20}\b9401\b|app id with identifier[^\n]{0,120}is not available', 'app_id_taken'),
+    (r'mismatchedapplicationidentifierentitlement|application-identifier entitlement string[^\n]{0,240}does not match', 'app_other_signer'),   # 同 install.SIGN_ERRORS（文本已转小写）
     (r'developer mode', 'developer_mode_required'),
     (r'device is locked|passcode|unlock', 'device_locked'),
     (r'pairing|not paired|invalidhostid|trust', 'device_pairing_required'),

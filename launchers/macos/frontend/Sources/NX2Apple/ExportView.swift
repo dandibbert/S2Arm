@@ -194,7 +194,7 @@ struct ExportView: View {
         let many = model.connectedDevices.count > 1
         return HStack(spacing: 12) {
             Image(systemName: "iphone").font(.system(size: 16, weight: .light)).foregroundStyle(LauncherPalette.cream)
-            Text(device == nil ? x("device.none") : many ? x("device.many") : x("device.connected").replacingOccurrences(of: "{0}", with: name))
+            Text(deviceText(device, name: name, many: many))
                 .font(.manrope(13)).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
             Spacer(minLength: 12)
             // 连着两台以上（#272）：列出每台，选中的那台用于按机型优化和装到设备，记住到下次
@@ -220,6 +220,14 @@ struct ExportView: View {
         .background(LauncherPalette.surface.opacity(0.7), in: RoundedRectangle(cornerRadius: 12))
         .padding(.top, 4)
         .task { while !Task.isCancelled { await model.refreshTargets(); try? await Task.sleep(nanoseconds: 5_000_000_000) } }
+    }
+
+    /// 设备那一行的说明：读不到设备列表 → 原因（不说没插）；只靠同一网络连着 → 明说没插线；其余照旧
+    private func deviceText(_ device: [String: Any]?, name: String, many: Bool) -> String {
+        if device == nil, let why = model.deviceProbeError { return loc.backend(why) }
+        guard let device else { return x("device.none") }
+        if many { return x("device.many") }
+        return x(device["wired"] as? Bool == true ? "device.connected" : "device.connected_network").replacingOccurrences(of: "{0}", with: name)
     }
 
     /// 「名字 · 机型 · iOS 版本 · 有线 / 同一网络」

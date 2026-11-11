@@ -52,6 +52,7 @@ struct LauncherView: View {
             topBar
             Divider().opacity(0.3)
             noticeBar
+            libraryNoticeBar
             if model.batchShown {
                 BatchExportView(model: model, covers: covers, install: { installFor = $0 }, freeSpace: { spaceFor = $0 }, uiLanguage: uiLanguage)
             } else if let result = model.viewingResult, let run = result.export {
@@ -118,6 +119,31 @@ struct LauncherView: View {
         .sheet(isPresented: $model.showKeys) { ImportSheet(model: model, kind: .keys).environmentObject(loc) }
         .sheet(isPresented: $model.showEnvironment) {
             EnvironmentView(model: model).environmentObject(loc)
+        }
+    }
+
+    /// 删除游戏 / 清除缓存的进行中与结果（S2ArmLauncherModel.libraryNotice）：点下就出现，成功几秒后自己收起，失败留着等玩家关
+    @ViewBuilder private var libraryNoticeBar: some View {
+        if let n = model.libraryNotice {
+            let text = loc.t(n.key + "." + { switch n.kind { case .running: "running"; case .done: "done"; case .failed: "failed" } }())
+                .replacingOccurrences(of: "{0}", with: n.name).replacingOccurrences(of: "{1}", with: loc.backend(n.detail))
+            HStack(spacing: 10) {
+                switch n.kind {
+                case .running: ProgressView().controlSize(.small)
+                case .done: Image(systemName: "checkmark.circle.fill").foregroundStyle(.green)
+                case .failed: Image(systemName: "exclamationmark.triangle.fill").foregroundStyle(LauncherPalette.danger)
+                }
+                Text(text).font(.manrope(13, .semibold)).fixedSize(horizontal: false, vertical: true)
+                Spacer(minLength: 8)
+                if n.kind != .running {
+                    Button { model.libraryNotice = nil } label: { Image(systemName: "xmark") }.buttonStyle(.plain).foregroundStyle(.secondary)
+                        .accessibilityIdentifier("notice.library.close")
+                }
+            }
+            .padding(.horizontal, 34).padding(.vertical, 10)
+            .background((n.kind == .failed ? LauncherPalette.danger : LauncherPalette.cream).opacity(0.10))
+            .accessibilityIdentifier("notice.library")
+            .task(id: n) { if n.kind == .done { try? await Task.sleep(nanoseconds: 6_000_000_000); if model.libraryNotice == n { model.libraryNotice = nil } } }
         }
     }
 

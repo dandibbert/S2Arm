@@ -1746,5 +1746,12 @@
   "s2arm.cloud.busyAfterSync": "同步期间开始了别的任务，这次没开局，等它做完再点「开始游戏」",
   "s2arm.action.installPad": "装到 iPad",
   "s2arm.install.titlePad": "装到 iPad",
-  "s2arm.export.installExistingPad": "已有 iPhone / iPad 包？装到 iPad"
+  "s2arm.export.installExistingPad": "已有 iPhone / iPad 包？装到 iPad",
+  "s2arm.notice.delete.running": "正在删除「{0}」…",
+  "s2arm.notice.delete.done": "已删除「{0}」。存档和原始游戏文件都还在。",
+  "s2arm.notice.delete.failed": "删除「{0}」没成功：{1}",
+  "s2arm.notice.clearCache.running": "正在清除「{0}」的缓存…",
+  "s2arm.notice.clearCache.done": "已清除「{0}」的缓存。",
+  "s2arm.notice.clearCache.failed": "清除「{0}」的缓存没成功：{1}",
+  "s2arm.notice.waitBusy.failed": "「{1}」还在进行，等它结束再操作「{0}」。"
 }

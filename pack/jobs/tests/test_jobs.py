@@ -2,7 +2,7 @@ import contextlib
 import collections
 import io
 import json
-import os
+import os, stat
 from pathlib import Path
 import shutil
 import signal
@@ -1433,6 +1433,26 @@ class JobsTests(unittest.TestCase):
         library.delete(self.c)
         self.assertFalse(gdir.exists())
         self.assertEqual([g["id"] for g in self.c.catalog()["games"]], [])
+
+    def test_delete_with_undeletable_file_still_removes_game_from_library(self):
+        # 11-11 玩家反馈「删除有时生效有时不生效」（真 App 复现：游戏文件夹里一个文件删不掉 → 整个删除失败、目录删一半、游戏还挂在列表里成了「找不到游戏文件」）。
+        #   期望（手写）：游戏立刻从清单里去掉、原文件夹不在原处；删不掉的那个文件留在存放位置的 .s2a-trash 里，记一条黄字；
+        #   之后读游戏库（catalog → sweep_trash）文件能删了就清掉
+        package = self.package(); game = self.game(packages=[package]); self.catalogue([game])
+        gdir = layout.game_dir(self.c, game["id"])
+        locked = gdir / "image" / "ios" / "kit" / "a.tsv"; locked.parent.mkdir(parents=True); locked.write_text("x")
+        os.chflags(locked, stat.UF_IMMUTABLE)
+        self.addCleanup(lambda: [os.chflags(p, 0) for p in (self.c.library / library.TRASH).rglob("a.tsv")] if (self.c.library / library.TRASH).exists() else None)
+        self.c.r["gameId"] = game["id"]
+        library.delete(self.c)
+        self.assertFalse(gdir.exists())
+        self.assertEqual([g["id"] for g in self.c.catalog()["games"]], [])
+        left = list((self.c.library / library.TRASH).rglob("a.tsv"))
+        self.assertEqual(len(left), 1)
+        self.assertTrue(any(d["severity"] == "warning" and "空闲时会再删" in json.dumps(d, ensure_ascii=False) for d in self.c.job["diagnostics"]))
+        os.chflags(left[0], 0)
+        library.sweep_trash(self.c)
+        self.assertEqual(list((self.c.library / library.TRASH).iterdir()), [])
 
     def test_delete_also_drops_game_from_library_container(self):
         # 期望（#227，游戏库结构 v3）：删 A → 各台手机记录（devices/<设备>.json）里摘掉 A，B 与其余字段原样；没装 A 的那台记录不动；

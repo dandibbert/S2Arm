@@ -55,7 +55,7 @@ class EarlyInstall:
         self.team = inst.devcert.team(c) or inst.pick_team(inst.xcode_teams(env), c.r.get("teamId"))
         self.dev = inst.phone(c)
         self.udid = inst.udid_of(c, self.dev["id"])
-        self.bid = inst.container_bundle_id(self.team["id"])
+        self.bid = inst.container_bundle_id(self.team["id"], c)
         self.ready = c.logs / (c.task + "-early.ready")
         self.ready.unlink(missing_ok=True)
         self.log = c.logs / (c.task + "-early.log")

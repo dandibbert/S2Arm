@@ -1694,6 +1694,7 @@ def catalog(c):
     import host_update
     c.begin("读取游戏库")
     sweep_residue(c)
+    sweep_trash(c)
     cat = c.catalog()
     input_supported, input_reason = toolchain.input_interface(c)
     for game in cat["games"]:
@@ -2144,29 +2145,66 @@ def delete(c):
                 # 上次删到一半（目录删不空）时 game.json 可能已被删掉、find_game 认不出：按索引找回同一个文件夹接着删，
                 #   不能当成「已经没有了」只把条目从清单里去掉、留下残留目录（#433）
                 gdir = layout.find_game(c, gid) or layout.indexed_dir(c, gid)
+                # 先整块挪进存放位置的 .s2a-trash/（同盘改名，原子；有程序正开着里面的文件也挪得动），清单立刻去掉这款，再删挪走的那堆：
+                #   原先边删边可能撞上删不掉的文件（被占用 / 有程序在写），抛出去时清单里还留着这款、目录删了一半，界面成了「找不到游戏文件」，
+                #   下次再删又卡在同一个文件上（11-11 玩家反馈「删除有时生效有时不生效」，真 App 复现）。挪走的删不干净只记黄字，空闲时 sweep_trash 接着删
+                trashed = []
                 if gdir and gdir.exists():
                     # 存档有内容就保留
                     saves = gdir / "saves"
                     backups = gdir / "save-backups"
                     has_saves = layout.has_content(saves) or layout.has_content(backups)   # 只有 .DS_Store 之类不算有存档
                     root = gdir.parent.parent   # 这款所在存放位置的根（root_of 靠 find_game，认不出时会退回默认位置）
-                    if has_saves:
-                        for item in gdir.iterdir():
-                            if item.name not in ("saves", "save-backups"):
-                                _rm(c, root, item)
-                    else:
-                        _rm(c, root, gdir)
-                for p in game_caches(c, gid):
-                    _rm(c, c.work_root, p)
+                    for item in ([i for i in gdir.iterdir() if i.name not in ("saves", "save-backups")] if has_saves else [gdir]):
+                        trashed.append((root, _to_trash(c, root, item, gid)))
                 drop_from_container(c, gid)
                 cat = c.catalog()
                 cat["games"] = [g for g in cat["games"] if g["id"] != gid]
                 atomic(c.library / "catalog.json", cat)
+                left = []
+                for root, p in trashed + [(c.work_root, p) for p in game_caches(c, gid)]:
+                    try:
+                        _rm(c, root, p)
+                    except (Failure, OSError) as e:
+                        left.append(f"{p.name}（{e}）")
+                if left:
+                    c.diagnostic("这款已从游戏库删掉；有几个文件当时删不掉（可能正被别的程序打开），S2Arm 空闲时会再删：" + "；".join(left)[:400],
+                                 code="job_failed", severity="warning")
             return {}
         except Failure as e:
             if "另一个任务正在使用游戏库" not in str(e) or time.time() - t0 > 120:
                 raise
             c.begin("等这款游戏在跑的任务结束"); time.sleep(2)
+
+
+TRASH = ".s2a-trash"   # 每个存放位置根下：删除时先把这款整块挪进来再删（delete），删不干净的空闲时清（sweep_trash）
+
+
+def _to_trash(c, root, item, gid):
+    """把 root 下的 item 改名挪进 root/.s2a-trash/<游戏号>-<毫秒>-<原名>（同盘改名）→ 新路径；挪不动（权限 / 只读盘）照实报"""
+    root, item = Path(os.path.abspath(root)), Path(os.path.abspath(item))
+    if root not in item.parents or _is_link(item):   # 不在这个存放位置里的、链接都不碰（同 _rm 的托管目录检查）
+        raise Failure("操作路径不属于托管目录。")
+    dest = root / TRASH / f"{gid}-{int(time.time() * 1000)}-{item.name}"
+    dest.parent.mkdir(parents=True, exist_ok=True)
+    try:
+        os.rename(item, dest)
+    except OSError as e:
+        raise Failure(f"删不掉「{item.name}」：{e.strerror or e}。确认这块盘没被设成只读、文件没被别的程序锁住，再删一次。", code="job_failed") from e
+    return dest
+
+
+def sweep_trash(c):
+    """删掉各存放位置 .s2a-trash/ 里上次没删干净的（delete 挪进来的、已不在游戏库里）；删不掉下次再试，不影响读游戏库"""
+    for _, root, ok in layout.locations(c):
+        t = root / TRASH
+        if not ok or not t.is_dir():
+            continue
+        for p in t.iterdir():
+            try:
+                _rm(c, root, p)
+            except (Failure, OSError):
+                pass
 
 
 def remove(c):

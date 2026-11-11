@@ -1745,5 +1745,12 @@
   "s2arm.cloud.busyAfterSync": "Another task started during the sync, so the game didn't start. Click Play again when it finishes",
   "s2arm.action.installPad": "Install on iPad",
   "s2arm.install.titlePad": "Install on iPad",
-  "s2arm.export.installExistingPad": "Already built? Install it on iPad"
+  "s2arm.export.installExistingPad": "Already built? Install it on iPad",
+  "s2arm.notice.delete.running": "Deleting {0}…",
+  "s2arm.notice.delete.done": "Deleted {0}. Saves and the original game files are kept.",
+  "s2arm.notice.delete.failed": "Couldn't delete {0}: {1}",
+  "s2arm.notice.clearCache.running": "Clearing the cache of {0}…",
+  "s2arm.notice.clearCache.done": "Cleared the cache of {0}.",
+  "s2arm.notice.clearCache.failed": "Couldn't clear the cache of {0}: {1}",
+  "s2arm.notice.waitBusy.failed": "{1} is still running. Try {0} again after it finishes."
 }

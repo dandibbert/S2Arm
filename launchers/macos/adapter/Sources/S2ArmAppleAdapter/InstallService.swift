@@ -116,8 +116,11 @@ public final class InstallService {
     public init(client: JobClient) { self.client = client }
 
     /// 装机前清单。只读：不申请描述文件、不签名、不碰设备上的 App。
-    public func readiness(gameId: String) async throws -> InstallReadiness {
-        InstallReadiness(result: try await client.perform("installCheck", extra: ["gameId": gameId]).result)
+    /// device：要装的那台（连着多台时出包页选中的），和 install 带的同一台；nil = 作业层按「有线优先」挑
+    public func readiness(gameId: String, device: String? = nil) async throws -> InstallReadiness {
+        var extra: [String: Any] = ["gameId": gameId]
+        if let device { extra["device"] = device }
+        return InstallReadiness(result: try await client.perform("installCheck", extra: extra).result)
     }
 
     /// 装。

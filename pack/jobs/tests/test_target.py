@@ -52,7 +52,7 @@ class TargetTests(JobCase):
         self.assertEqual(arch.call_count, 2)
 
     def test_target_probe_preserves_error_code(self):
-        with patch.object(target, "connected", return_value=[]), \
+        with patch.object(target, "device_list", return_value=([], "", None, None)), \
              patch.object(target, "models", side_effect=target.TargetError("missing database", code="xcode_unavailable")):
             with self.assertRaises(Failure) as raised:
                 target.probe(self.c)
@@ -62,13 +62,14 @@ class TargetTests(JobCase):
         # quick：只给机型 / 系统静态表，不读连着的设备（出包页立刻能选机型；10-26 维护者：机型表等设备探测 61 秒）
         fixture = [dict(name="fixture", productType="iPhone18,2", gpuArch="applegpu_g18p")]
         self.c.r["quick"] = True
-        with patch.object(target, "connected", side_effect=AssertionError("quick 不该读设备")), \
+        with patch.object(target, "device_list", side_effect=AssertionError("quick 不该读设备")), \
              patch.object(target, "models", return_value=fixture), patch.object(target, "os_choices", return_value=[27, 26]):
-            self.assertEqual(target.probe(self.c), dict(connected=[], models=fixture, osChoices=[27, 26]))
+            self.assertEqual(target.probe(self.c), dict(connected=[], connectedError="", models=fixture, osChoices=[27, 26]))   # quick 没读设备：不是读失败
         self.c.r.pop("quick")
-        with patch.object(target, "connected", return_value=["dev"]) as seen, \
+        with patch.object(target, "device_list", return_value=(["raw"], "", None, None)) as seen, \
+             patch.object(target, "_keep_device", lambda d: True), patch.object(target, "_row", lambda d, dev_dir, link: "dev"), \
              patch.object(target, "models", return_value=fixture), patch.object(target, "os_choices", return_value=[27]):
-            self.assertEqual(target.probe(self.c)["connected"], ["dev"])
+            self.assertEqual(target.probe(self.c)["connected"], ["dev"])   # 完整探测读设备列表（打桩，不碰真手机）
         seen.assert_called_once()
 
     def test_target_probe_survives_device_list_timeout(self):
@@ -78,7 +79,7 @@ class TargetTests(JobCase):
         with patch.object(diag, "devicectl", side_effect=subprocess.TimeoutExpired(["xcrun", "devicectl"], 60)), \
              patch.object(target, "models", return_value=fixture), patch.object(target, "os_choices", return_value=[27, 26]):
             result = target.probe(self.c)
-        self.assertEqual(result, dict(connected=[], models=fixture, osChoices=[27, 26]))
+        self.assertEqual(result, dict(connected=[], connectedError="读取设备列表超时：解锁手机，重新插一次数据线再试。", models=fixture, osChoices=[27, 26]))   # 读失败要说出来，不当「没连」
 
     def test_min_os_is_18_metal3_range_accepted(self):
         # 期望（10-26 维护者：直连下限 iOS 18 / macOS 15，18–25 走 Metal 3 兼容路径）：A14（applegpu_g13p）+ iOS 18 能出包；iOS 17 拒、提示写「iOS 18」；A13（g12）拒
