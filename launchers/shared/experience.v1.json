@@ -1166,6 +1166,7 @@
       {"id": "space.kept", "zh-Hans": "保留", "en": "Kept"},
       {"id": "space.kept.saves", "zh-Hans": "存档", "en": "Saves"},
       {"id": "space.kept.logs", "zh-Hans": "日志", "en": "Logs"},
+      {"id": "path.open", "zh-Hans": "在资源管理器中打开", "en": "Open in File Explorer"},
       {"id": "space.keptNote", "zh-Hans": "存档、日志、游戏原件只报大小，不在这里删。", "en": "Saves, logs and game files are only listed here, never deleted."},
       {"id": "space.nothing", "zh-Hans": "没有可以删的", "en": "Nothing to delete"},
       {"id": "space.total", "zh-Hans": "已选 {0}", "en": "{0} selected"},

@@ -100,16 +100,15 @@ package struct CardRow<Trailing: View>: View {
                     // A path is technical text: the system's monospaced face, on one line, cut in the middle when
                     // too long. Everything else is prose in Manrope and wraps, so no word is ever cut.
                     if detail.hasPrefix("/") || detail.hasPrefix("~") {
-                        Text(detail).font(.mono(12)).foregroundStyle(.secondary)
-                            .lineLimit(1).truncationMode(.middle).help(help.isEmpty ? detail : help)
+                        PathLink(detail, help: help)
                     } else {
                         Text(detail).font(.manrope(12.5)).foregroundStyle(.secondary)
                             .fixedSize(horizontal: false, vertical: true).help(help.isEmpty ? detail : help)
                     }
                 }
                 if !detail2.isEmpty {
-                    Text(detail2).font(.mono(12)).foregroundStyle(.secondary)
-                        .lineLimit(1).truncationMode(.middle).help(detail2)
+                    if detail2.hasPrefix("/") || detail2.hasPrefix("~") { PathLink(detail2) }
+                    else { Text(detail2).font(.mono(12)).foregroundStyle(.secondary).lineLimit(1).truncationMode(.middle).help(detail2) }
                 }
             }
             Spacer(minLength: 12)
@@ -117,6 +116,41 @@ package struct CardRow<Trailing: View>: View {
         }
         .padding(.horizontal, 18).padding(.vertical, 13)
         .frame(minHeight: 52)
+    }
+}
+
+/// A path shown on a card: monospaced, one line, cut in the middle. When it exists on disk it is a link — a click opens the folder
+/// in Finder (a file is selected in its folder), so nobody has to copy the path by hand. A path that is not there (a disk not
+/// plugged in) stays plain text.
+package struct PathLink: View {
+    let path: String
+    let help: String
+    @State private var hovering = false
+
+    package init(_ path: String, help: String = "") { self.path = path; self.help = help }
+
+    private var url: URL { URL(fileURLWithPath: (path as NSString).expandingTildeInPath) }
+
+    package var body: some View {
+        var isDir: ObjCBool = false
+        let exists = FileManager.default.fileExists(atPath: url.path, isDirectory: &isDir)
+        let text = Text(path).font(.mono(12)).lineLimit(1).truncationMode(.middle)
+        if exists {
+            Button {
+                if isDir.boolValue { NSWorkspace.shared.open(url) } else { NSWorkspace.shared.activateFileViewerSelecting([url]) }
+            } label: {
+                text.underline(hovering).foregroundStyle(hovering ? Color.primary : Color.secondary)
+            }
+            .buttonStyle(.plain)
+            .onHover { inside in
+                hovering = inside
+                if inside { NSCursor.pointingHand.push() } else { NSCursor.pop() }
+            }
+            .help(help.isEmpty ? path : help)
+            .accessibilityHint(Text(path))
+        } else {
+            text.foregroundStyle(.secondary).help(help.isEmpty ? path : help)
+        }
     }
 }
 

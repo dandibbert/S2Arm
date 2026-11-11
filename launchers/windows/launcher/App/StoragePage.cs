@@ -171,7 +171,7 @@ public sealed partial class EnvironmentWindow
             row.Children.Add(Muted(l.Connected && l.TotalBytes is { } total && l.FreeBytes is { } free
                 ? T("storage.location.usage").Replace("{0}", FormatBytes(l.UsedBytes ?? 0)).Replace("{1}", FormatBytes(free)).Replace("{2}", FormatBytes(total))
                 : T("storage.location.offline")));
-            row.Children.Add(Muted(l.Path, 12));
+            row.Children.Add(PathLink(l.Path));
             places.Children.Add(row);
         }
         body.Children.Add(Card(places));

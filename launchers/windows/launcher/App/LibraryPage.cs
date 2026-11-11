@@ -369,6 +369,28 @@ public sealed partial class EnvironmentWindow
         return true;
     }
 
+    /// <summary>界面上显示的文件夹路径：存在就做成链接，点一下在资源管理器里打开（文件则选中它），玩家不用对着路径复制；不在（外接盘没插）只显示文字。
+    /// 同 Mac NXLauncher PathLink</summary>
+    private Control PathLink(string path, double size = 12)
+    {
+        var isDir = path.Length > 0 && Path.IsPathFullyQualified(path) && !path.Contains('"') && Directory.Exists(path);
+        var isFile = !isDir && path.Length > 0 && Path.IsPathFullyQualified(path) && !path.Contains('"') && File.Exists(path);
+        if (!isDir && !isFile) return Muted(path, size);
+        var text = new TextBlock { Text = path, FontSize = size, TextWrapping = TextWrapping.Wrap, Foreground = Brush.Parse("#A8A6A1") };
+        var link = new Button { Content = text, Background = Brushes.Transparent, BorderThickness = new Thickness(0), Padding = new Thickness(0),
+            Cursor = new Avalonia.Input.Cursor(Avalonia.Input.StandardCursorType.Hand), HorizontalAlignment = HorizontalAlignment.Left };
+        ToolTip.SetTip(link, T("path.open"));
+        link.PointerEntered += (_, _) => { text.TextDecorations = TextDecorations.Underline; text.Foreground = Ink; };
+        link.PointerExited += (_, _) => { text.TextDecorations = null; text.Foreground = Brush.Parse("#A8A6A1"); };
+        link.Click += (_, _) =>
+        {
+            if (!OperatingSystem.IsWindows()) return;
+            try { using var process = Process.Start(new ProcessStartInfo("explorer.exe", isDir ? "\"" + path + "\"" : "/select,\"" + path + "\"") { UseShellExecute = false }); }
+            catch (Exception error) when (error is System.ComponentModel.Win32Exception or InvalidOperationException or IOException) { }
+        };
+        return link;
+    }
+
     private async Task MoveGameAsync(LibraryGame game)
     {
         var folders = await StorageProvider.OpenFolderPickerAsync(new FolderPickerOpenOptions { Title = T("library.menu.move") });

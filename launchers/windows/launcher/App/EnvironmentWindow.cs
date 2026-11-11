@@ -267,7 +267,7 @@ public sealed partial class EnvironmentWindow : Window
         var libraryRow = new Grid { ColumnDefinitions = new ColumnDefinitions("*,Auto") };
         var libraryText = new StackPanel { Spacing = 4 };
         libraryText.Children.Add(Label(T("environment.library.title"), 16));
-        libraryText.Children.Add(Label(connectedFolder ?? libraryFolder));
+        libraryText.Children.Add(PathLink(connectedFolder ?? libraryFolder, 14));
         libraryText.Children.Add(Label(T("environment.library.detail")));
         libraryRow.Children.Add(libraryText);
         var libraryChange = Action("environment.library.change", () => BeginPicker(ChangeLibraryAsync), !libraryBusy && !PackBusy);
