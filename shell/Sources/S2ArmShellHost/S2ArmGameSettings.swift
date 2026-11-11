@@ -33,7 +33,8 @@ public enum S2ArmGameSettings {
 
     public static func sections(for id: String, stores: Stores = .live, state: LayoutState) -> [SettingSection] {
         let g = stores.game(id)
-        let on60 = (g?.object(forKey: "S2AFps60") as? Bool) ?? true
+        // 这款没设过就看「所有游戏的默认」（App 级，起局时 ios/settings.m 的 s2a_ios_settings_defaults 同一分层），再没有才是开
+        let on60 = (g?.object(forKey: "S2AFps60") as? Bool) ?? (stores.app.object(forKey: "S2AFps60") as? Bool) ?? true
         let force = g?.bool(forKey: "S2AWidenForce") ?? false
         let op = (stores.app.object(forKey: "S2AVPadOpacity") as? Double).map { min(1, max(0.1, $0)) } ?? 1
         var options = [SettingOption("default", "Default layout")]

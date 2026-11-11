@@ -435,10 +435,11 @@ UIView *s2a_ios_root_view(void) { return g_root; }
 //   设置页「60 帧」「宽屏」开关读写的是同一个设置（S2AFps60 / S2AWidescreen），玩家随时改回。帧率选「切换」当场热切（s2a_fps_set_enabled(0)，游戏速度不变）；
 //   宽屏选「切换」调满屏线 s2a_widen_force_native(1)（runtime/src/widen.c：本局钉成 1920×1080、热切到原生 16:9）：返回 1 = 已热切；
 //   -1 = 游戏自己出宽图的款（第二层值槽装载时填死，裁中间会切掉贴边界面）→ 提示重启后生效（下次起局读 S2AWidescreen 关宽屏）
+#include "settings.h"   // s2a_ios_settings_defaults：问过 / 原生 60 帧 / 自动退回都记在这一款（11-11，原先 App 级、串到所有游戏）
 static NSString *qp_key(int kind) { return kind == 1 ? @"S2AFps60Asked" : @"S2AWidescreenAsked"; }
-int s2a_ios_qp_asked(int kind) { return [NSUserDefaults.standardUserDefaults boolForKey:qp_key(kind)]; }
+int s2a_ios_qp_asked(int kind) { return [s2a_ios_settings_defaults() boolForKey:qp_key(kind)]; }
 // 本款原生 60 帧（runtime/src/qprompt_host.c 按运行时实际状态判定后调）：记进本 App 设置，设置页 60 帧那行据此显示「本款原生 60 帧」、开关置灰（app_settings.m）
-void s2a_ios_fps_native60(int on) { [NSUserDefaults.standardUserDefaults setBool:on != 0 forKey:@"S2AFpsNative60"]; }
+void s2a_ios_fps_native60(int on) { [s2a_ios_settings_defaults() setBool:on != 0 forKey:@"S2AFpsNative60"]; }
 void s2a_fps_set_enabled(int on);
 int s2a_fps_hot_revert_ok(void);   // runtime/src/fps.c：1 = 运行中关 60 帧能完全回原帧率；0 = 游戏自己的限帧变量要重启才回（帧率表 w 行没写关值）
 // 「切换到原生帧率」重启后生效（原生线 11-02：w 行写回的「原值」是初始化前的快照，八方2 / 巫师3 写 0 = 不限帧）：S2AFps60 已写 NO，新局帧率表起局就关。
@@ -470,7 +471,7 @@ void s2a_ios_fps_capped(int reason) {
 // 满屏自检自动退回（runtime/src/qprompt_host.c widen_auto_revert，11-06 满屏泛化）：记进本 App 设置（宽屏关 = 下次起局 16:9，设置页可改回），横幅一行告诉玩家
 //   persist（11-06 起）：两次不同启动都触发才记住（runtime/src/widen_remember.c）；只一次的不写设置，下次启动重新试满屏
 void s2a_ios_widen_auto(int hot, int why, int persist) {
-    if (persist) { NSUserDefaults *d = NSUserDefaults.standardUserDefaults; [d setBool:NO forKey:@"S2AWidescreen"]; [d setBool:YES forKey:qp_key(2)]; }
+    if (persist) { NSUserDefaults *d = s2a_ios_settings_defaults(); [d setBool:NO forKey:@"S2AWidescreen"]; [d setBool:YES forKey:qp_key(2)]; }
     NSString *body = persist ? (hot ? S2AL(@"app.widen.persistHot") : S2AL(@"app.widen.persist"))
                              : (hot ? S2AL(@"app.widen.onceHot") : S2AL(@"app.widen.once"));
     (void)why; dispatch_async(dispatch_get_main_queue(), ^{ s2a_dprompt_notice(S2AL(@"app.widen.title"), body, 0, 6); });
@@ -483,7 +484,7 @@ void s2a_ios_qprompt(int kind, int secs) {   // 文案 维护者 11-02 定：「
                                 : [NSString stringWithFormat:S2AL(@"app.qp.widen.title"), secs];
         UIAlertController *a = [UIAlertController alertControllerWithTitle:t message:S2AL(@"app.qp.message") preferredStyle:UIAlertControllerStyleAlert];
         [a addAction:[UIAlertAction actionWithTitle:S2AL(@"app.qp.switch") style:UIAlertActionStyleDefault handler:^(UIAlertAction *x) { (void)x;
-            NSUserDefaults *d = NSUserDefaults.standardUserDefaults; [d setBool:YES forKey:qp_key(kind)];
+            NSUserDefaults *d = s2a_ios_settings_defaults(); [d setBool:YES forKey:qp_key(kind)];
             if (kind == 1) { [d setBool:NO forKey:@"S2AFps60"];
                 if (s2a_fps_hot_revert_ok()) { s2a_fps_set_enabled(0); LOG("撑不住就问玩家：玩家选还原原生帧率，60 帧已热切关"); return; }
                 LOG("撑不住就问玩家：玩家选还原原生帧率，这款要重启后生效（帧率表有没写关值的 w 行）"); qp_fps_restart_ask(); return; }
@@ -494,7 +495,7 @@ void s2a_ios_qprompt(int kind, int secs) {   // 文案 维护者 11-02 定：「
             [r addAction:[UIAlertAction actionWithTitle:S2AL(@"common.gotIt") style:UIAlertActionStyleCancel handler:nil]];
             UIViewController *p = g_root.window.rootViewController; while (p.presentedViewController) p = p.presentedViewController; [p presentViewController:r animated:YES completion:nil]; }]];
         [a addAction:[UIAlertAction actionWithTitle:S2AL(@"app.qp.keep") style:UIAlertActionStyleCancel handler:^(UIAlertAction *x) { (void)x;
-            [NSUserDefaults.standardUserDefaults setBool:YES forKey:qp_key(kind)]; LOG("撑不住就问玩家：玩家选保持（%s）", kind == 1 ? "60 帧" : "宽屏"); }]];
+            [s2a_ios_settings_defaults() setBool:YES forKey:qp_key(kind)]; LOG("撑不住就问玩家：玩家选保持（%s）", kind == 1 ? "60 帧" : "宽屏"); }]];
         [top presentViewController:a animated:YES completion:nil];
         LOG("撑不住就问玩家：已弹「%s」", t.UTF8String);
     });

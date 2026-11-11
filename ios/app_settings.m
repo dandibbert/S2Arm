@@ -98,9 +98,9 @@ static UILabel *textLabel(UIFontTextStyle style) {
 - (instancetype)init {
     if (!(self = [super init])) return nil;
     _runtime = g_runtime;
-    _entryGraphics = s2a_ios_graphics_snapshot(NSUserDefaults.standardUserDefaults);
+    _entryGraphics = s2a_ios_graphics_snapshot(s2a_ios_settings_defaults());
     _patchGroups = s2a_cpatch_bundled_groups();
-    _entryPatches = S2ACPatchEnabled(_patchGroups, NSUserDefaults.standardUserDefaults);
+    _entryPatches = S2ACPatchEnabled(_patchGroups, s2a_ios_settings_defaults());
     self.title = S2AL(@"common.settings"); return self;
 }
 - (void)viewDidLoad {
@@ -195,7 +195,7 @@ static UILabel *textLabel(UIFontTextStyle style) {
 - (UITableViewCell *)sliderCell:(NSDictionary *)option {
     UITableViewCell *cell = [self baseCell:@""]; cell.selectionStyle = UITableViewCellSelectionStyleNone;
     NSArray *values = option[@"values"], *labels = option[@"labels"];
-    NSInteger selected = [values indexOfObject:s2a_ios_graphics_snapshot(NSUserDefaults.standardUserDefaults)[option[@"key"]]];
+    NSInteger selected = [values indexOfObject:s2a_ios_graphics_snapshot(s2a_ios_settings_defaults())[option[@"key"]]];
     UILabel *title = textLabel(UIFontTextStyleBody); title.text = option[@"title"];
     UILabel *value = textLabel(UIFontTextStyleBody); value.text = labels[selected]; value.textColor = self.view.tintColor;
     [value setContentCompressionResistancePriority:UILayoutPriorityRequired forAxis:UILayoutConstraintAxisHorizontal];
@@ -207,7 +207,7 @@ static UILabel *textLabel(UIFontTextStyle style) {
     [slider addAction:[UIAction actionWithHandler:^(UIAction *action) {
         UISlider *control = (UISlider *)action.sender; NSInteger index = lroundf(control.value); control.value = index;
         value.text = labels[index]; control.accessibilityValue = labels[index];
-        [NSUserDefaults.standardUserDefaults setObject:values[index] forKey:option[@"key"]];
+        [s2a_ios_settings_defaults() setObject:values[index] forKey:option[@"key"]];
     }] forControlEvents:UIControlEventValueChanged];
     [slider.heightAnchor constraintGreaterThanOrEqualToConstant:44].active = YES;
     UIStackView *ticks = [UIStackView new]; ticks.distribution = UIStackViewDistributionEqualSpacing;
@@ -221,7 +221,7 @@ static UILabel *textLabel(UIFontTextStyle style) {
 - (UITableViewCell *)toggleCell:(NSInteger)index {
     NSString *key = toggleKeys()[index]; UITableViewCell *cell = [self baseCell:toggleTitles()[index]];
     cell.selectionStyle = UITableViewCellSelectionStyleNone;
-    UISwitch *control = [UISwitch new]; id saved = [NSUserDefaults.standardUserDefaults objectForKey:key];
+    UISwitch *control = [UISwitch new]; id saved = [s2a_ios_settings_defaults() objectForKey:key];
     control.on = saved ? [saved boolValue] : (index == 1 || index == 2 || index == 6 || index == 7);
     control.accessibilityLabel = toggleTitles()[index]; control.accessibilityIdentifier = [@"settings." stringByAppendingString:key];
     // 主机模式（#352，维护者 11-09：手机缺省掌机，玩家可自己开）：标题下一行写明代价——更耗电换画质，手机上不建议开
@@ -234,7 +234,7 @@ static UILabel *textLabel(UIFontTextStyle style) {
         sub.selectionStyle = UITableViewCellSelectionStyleNone; cell = sub;
     }
     // 本款原生 60 帧（运行时判定后记在 S2AFpsNative60，app.m s2a_ios_fps_native60）：开关改不动帧率，显示原因、置灰（11-02 维护者 丝之歌关了照样 60 帧、以为没生效）
-    if ([key isEqualToString:@"S2AFps60"] && [NSUserDefaults.standardUserDefaults boolForKey:@"S2AFpsNative60"]) {
+    if ([key isEqualToString:@"S2AFps60"] && [s2a_ios_settings_defaults() boolForKey:@"S2AFpsNative60"]) {
         control.on = YES; control.enabled = NO; cell.detailTextLabel.text = S2AL(@"settings.fps.native"); control.accessibilityValue = S2AL(@"settings.fps.native");
         cell.accessoryView = control; return cell; }
     // 包里 60 帧是关的（强信号：逻辑速度红 / 崩溃 / 卡死 / 帧率达不到；11-02 起全引擎默认开，只有强信号才关）：开关显示玩家手动开没开（S2AFps60Manual，缺省关、不跟 S2AFps60 的缺省开），打开时先提示（11-02 维护者 / 维护者 定的文案）；下次启动生效（settings.m）
@@ -243,7 +243,7 @@ static UILabel *textLabel(UIFontTextStyle style) {
         control.on = NO; control.enabled = NO; cell.detailTextLabel.text = S2AL(@"settings.widen.blocked"); control.accessibilityValue = cell.detailTextLabel.text;
         cell.accessoryView = control; return cell; }
     if ([key isEqualToString:@"S2AFps60"] && s2a_ios_caps_value("fps60") == 0) {
-        NSUserDefaults *d = NSUserDefaults.standardUserDefaults;
+        NSUserDefaults *d = s2a_ios_settings_defaults();
         control.on = [d boolForKey:@"S2AFps60Manual"]; cell.detailTextLabel.text = S2AL(@"settings.fps.knownIssue");
         __weak S2ASettingsController *weakSelf = self;
         [control addAction:[UIAction actionWithHandler:^(UIAction *action) {
@@ -261,7 +261,7 @@ static UILabel *textLabel(UIFontTextStyle style) {
     [control addAction:[UIAction actionWithHandler:^(UIAction *action) {
         BOOL enabled = ((UISwitch *)action.sender).on;
         if ([key isEqualToString:@"S2A.touchHud"]) s2a_vpad_set_touch_hud(enabled);
-        else [NSUserDefaults.standardUserDefaults setBool:enabled forKey:key];
+        else [s2a_ios_settings_defaults() setBool:enabled forKey:key];
     }] forControlEvents:UIControlEventValueChanged];
     cell.accessoryView = control; return cell;
 }
@@ -293,9 +293,9 @@ static UILabel *textLabel(UIFontTextStyle style) {
         NSDictionary *option = s2a_ios_graphics_options()[row];
         if (row != 2) return [self sliderCell:option];
         NSArray *values = option[@"values"];
-        NSInteger selected = [values indexOfObject:s2a_ios_graphics_snapshot(NSUserDefaults.standardUserDefaults)[option[@"key"]]];
+        NSInteger selected = [values indexOfObject:s2a_ios_graphics_snapshot(s2a_ios_settings_defaults())[option[@"key"]]];
         return [self dropdown:option[@"title"] labels:option[@"labels"] selected:selected enabled:^BOOL(NSInteger index) { return YES; } choose:^(NSInteger index) {
-            [NSUserDefaults.standardUserDefaults setObject:values[index] forKey:option[@"key"]]; [weakSelf refresh];
+            [s2a_ios_settings_defaults() setObject:values[index] forKey:option[@"key"]]; [weakSelf refresh];
         } identifier:@"settings.filter"];
     }
     if (group == 1 && row == 0) {
@@ -334,13 +334,13 @@ static UILabel *textLabel(UIFontTextStyle style) {
     // 掌机 / 主机改成运行中直接切（缺口扫描族 2，接口 v2.15）：服务层调 ChangeDockedModeState，按游戏的通知开关发模式消息、点亮分辨率事件；
     //   不再算进「要重启才生效」的画面设置
     BOOL graphicsRestart = NO;
-    NSInteger docked = s2a_ios_settings_docked_change(_entryGraphics, s2a_ios_graphics_snapshot(NSUserDefaults.standardUserDefaults), &graphicsRestart);
+    NSInteger docked = s2a_ios_settings_docked_change(_entryGraphics, s2a_ios_graphics_snapshot(s2a_ios_settings_defaults()), &graphicsRestart);
     if (docked >= 0) {
         if (s2a_console_mode_set) s2a_console_mode_set((int)docked);
-        _entryGraphics = [s2a_ios_graphics_snapshot(NSUserDefaults.standardUserDefaults) copy];
+        _entryGraphics = [s2a_ios_graphics_snapshot(s2a_ios_settings_defaults()) copy];
     }
     BOOL changed = graphicsRestart ||
-        ![_entryPatches isEqual:S2ACPatchEnabled(_patchGroups, NSUserDefaults.standardUserDefaults)];
+        ![_entryPatches isEqual:S2ACPatchEnabled(_patchGroups, s2a_ios_settings_defaults())];
     if (!changed) { [self close]; return; }
     BOOL canRestart = _runtime.restart && _runtime.canRestart && _runtime.canRestart();
     UIAlertController *alert = [UIAlertController alertControllerWithTitle:S2AL(@"settings.restart.title")

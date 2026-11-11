@@ -448,6 +448,41 @@ int main(int argc, char **argv) {
             check(getenv("DM_NVN_PASSDUMP") == NULL, @"诊断局：第二次起局不再开");
             unsetenv("S2A_DOCS"); [NSFileManager.defaultManager removeItemAtPath:docs error:nil];
         }
+        // 画面设置按游戏存（11-11）：多款容器选了游戏后 s2a_ios_settings_defaults 是分层的——画面键读「这款 → 所有游戏的默认（App 级）」、
+        //   写只写这款；非画面键原样走 App 级；没有游戏号就是 App 级本身。一次性迁移清掉 App 级里自动写下的「宽屏关 + 问过」与原生 60 帧记号，
+        //   玩家自己选的留作默认。期望按这条规则手写
+        {   clear_environment(); unsetenv("S2A_LAUNCH_GAME_ID");
+            NSUserDefaults *app = NSUserDefaults.standardUserDefaults;
+            check(s2a_ios_settings_defaults() == app, @"按游戏：没有游戏号就是 App 级本身（单款壳行为不变）");
+            NSString *gid = [@"01000000000" stringByAppendingString:[NSUUID.UUID.UUIDString substringToIndex:5]];
+            NSUserDefaults *game = [[NSUserDefaults alloc] initWithSuiteName:[@"S2AGame." stringByAppendingString:gid]];
+            for (NSString *k in s2a_ios_per_game_keys()) [app removeObjectForKey:k];
+            [app removeObjectForKey:@"S2APerGameMigrated1111"];
+            [app setBool:NO forKey:@"S2AWidescreen"]; [app setBool:YES forKey:@"S2AWidescreenAsked"];   // 某一款自动退回写下的
+            [app setBool:YES forKey:@"S2AFpsNative60"];
+            [app setObject:@"2" forKey:@"S2AResolutionScale"];                                          // 玩家自己选的
+            [app setBool:NO forKey:@"S2AFps60"];                                                         // 玩家自己关的（没有问过记号）
+            setenv("S2A_LAUNCH_GAME_ID", gid.UTF8String, 1);
+            NSUserDefaults *d = s2a_ios_settings_defaults();
+            s2a_ios_apply_graphics_settings(d);
+            check(![app objectForKey:@"S2AWidescreen"] && ![app objectForKey:@"S2AWidescreenAsked"] && ![app objectForKey:@"S2AFpsNative60"] && [app boolForKey:@"S2APerGameMigrated1111"],
+                  @"按游戏：迁移清掉 App 级里自动写下的宽屏关 + 问过、原生 60 帧记号");
+            check(getenv("S2A_WIDESCREEN") == NULL, @"按游戏：自动退回的宽屏关不再串到别的游戏");
+            check(getenv("S2A_RES_SCALE") && !strcmp(getenv("S2A_RES_SCALE"), "2"), @"按游戏：玩家自己选的分辨率留作所有游戏的默认");
+            check(getenv("S2A_FPS60") && !strcmp(getenv("S2A_FPS60"), "0"), @"按游戏：这款没设 60 帧 → 用所有游戏的默认（关）");
+            clear_environment(); [game setBool:YES forKey:@"S2AFps60"];
+            s2a_ios_apply_graphics_settings(d);
+            check(getenv("S2A_FPS60") == NULL, @"按游戏：这款开 60 帧压过所有游戏的默认（关）——原先压不过");
+            [d setBool:NO forKey:@"S2AWidescreen"];
+            check([game objectForKey:@"S2AWidescreen"] && ![game boolForKey:@"S2AWidescreen"] && ![app objectForKey:@"S2AWidescreen"], @"按游戏：设置页写宽屏只写这款，App 级不变");
+            [d setBool:YES forKey:@"S2ADevHUD"];
+            check([app boolForKey:@"S2ADevHUD"] && ![game objectForKey:@"S2ADevHUD"], @"按游戏：非画面键（开发浮层）照旧写 App 级");
+            check([[d stringForKey:@"S2AResolutionScale"] isEqual:@"2"] && [d boolForKey:@"S2AFps60"], @"按游戏：读这款有的、没有回落默认");
+            for (NSString *k in s2a_ios_per_game_keys()) [app removeObjectForKey:k];
+            [app removeObjectForKey:@"S2ADevHUD"]; [app removeObjectForKey:@"S2APerGameMigrated1111"];
+            [game removePersistentDomainForName:[@"S2AGame." stringByAppendingString:gid]];
+            unsetenv("S2A_LAUNCH_GAME_ID"); clear_environment();
+        }
         clear_environment();
         [a removePersistentDomainForName:suiteA];
         [b removePersistentDomainForName:suiteB];

@@ -3,9 +3,10 @@
 //   帧率类社区项（编号 fps:）跟 60 帧开关走（runtime/src/cpatch.c s2a_cpatch_fps_follow），这里只显示、不单独开关。主标题中文名（cpatch_model.m 对照表），
 //   副标题英文原名 + 「社区 · 我方已验 / 未经验证」。下次启动生效
 #import "cpatch_settings.h"
+#import "settings.h"   // s2a_ios_settings_defaults：社区补丁按游戏存（11-11）
 #import "s2a_l10n.h"
 
-static BOOL default_on(NSString *key) { id v = [NSUserDefaults.standardUserDefaults objectForKey:key]; return v ? [v boolValue] : YES; }   // 两个总开关缺省开
+static BOOL default_on(NSString *key) { id v = [s2a_ios_settings_defaults() objectForKey:key]; return v ? [v boolValue] : YES; }   // 两个总开关缺省开
 
 @interface S2ACPatchSettings : UITableViewController
 @end
@@ -81,19 +82,19 @@ static NSString *master_key(S2ACPatchGroup *g) { return [g.kind isEqual:@"widesc
     sw.accessibilityLabel = it.title; sw.accessibilityIdentifier = [@"cpatch.item." stringByAppendingString:it.ident];
     if (it.followsFps60) { sw.on = default_on(@"S2AFps60"); sw.enabled = NO; }
     else {
-        sw.on = [S2ACPatchEnabled(_groups, NSUserDefaults.standardUserDefaults) containsObject:it.ident];
+        sw.on = [S2ACPatchEnabled(_groups, s2a_ios_settings_defaults()) containsObject:it.ident];
         [sw addTarget:self action:@selector(itemChanged:) forControlEvents:UIControlEventValueChanged];
     }
     return cell;
 }
 - (void)masterChanged:(UISwitch *)sw {
     NSString *mk = master_key(_groups[sw.tag]); if (!mk) return;
-    [NSUserDefaults.standardUserDefaults setBool:sw.on forKey:mk];
+    [s2a_ios_settings_defaults() setBool:sw.on forKey:mk];
     [self.tableView reloadSections:[NSIndexSet indexSetWithIndex:(NSUInteger)sw.tag] withRowAnimation:UITableViewRowAnimationNone];   // 帧率类社区项跟着变
 }
 - (void)itemChanged:(UISwitch *)sw {
     NSString *ident = [sw.accessibilityIdentifier substringFromIndex:@"cpatch.item.".length];
-    S2ACPatchSetEnabled(_groups, NSUserDefaults.standardUserDefaults, ident, sw.on);
+    S2ACPatchSetEnabled(_groups, s2a_ios_settings_defaults(), ident, sw.on);
 }
 @end
 

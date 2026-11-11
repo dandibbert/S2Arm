@@ -18,6 +18,12 @@ int s2a_ios_reload_graphics_settings(void);
 @class NSUserDefaults;
 @class NSDictionary;
 @class NSArray;
+// 当前这款游戏的设置（11-11 维护者：画面设置不许串到别的游戏）。多款容器选了游戏（S2A_LAUNCH_GAME_ID）时，画面类的键
+//   （s2a_ios_per_game_keys）读先看 S2AGame.<游戏号>、这款没设过再看 App 级——App 级就是「所有游戏的默认」，老玩家原有的设置
+//   原样留在那里当默认、不迁不丢；写和删只动这一款。其余键原样走 App 级。单款壳 / 还没选游戏 = App 级本身。
+//   起局读取、游戏内设置页、撑不住就问玩家、社区补丁都用它，不再直接用 standardUserDefaults 读写画面键。
+NSUserDefaults *s2a_ios_settings_defaults(void);
+NSArray *s2a_ios_per_game_keys(void);
 // Discrete values compatible with Settings.bundle and normalized in-app values.
 NSArray<NSDictionary *> *s2a_ios_graphics_options(void);
 NSDictionary *s2a_ios_graphics_snapshot(NSUserDefaults *defaults);

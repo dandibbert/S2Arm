@@ -129,7 +129,7 @@ static int g_src_w, g_src_h;   // 最近一帧真实出图尺寸（gameRect 里�
 //   每次现读（settings.m s2a_ios_res_scale）：设置页「立刻重启」重写环境变量后进程内重启，不能沿用上一局的倍率（审计 P1-9）
 static float g_res_scale(void) {
     static float last = 1.0f;
-    float v = s2a_ios_res_scale(NSUserDefaults.standardUserDefaults);
+    float v = s2a_ios_res_scale(s2a_ios_settings_defaults());
     if (v != last) { last = v; LOG("触屏：渲染倍率 %gx，触点空间按游戏尺寸（出图 ÷ %g）算", v, v); }
     return v;
 }
