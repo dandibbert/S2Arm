@@ -427,27 +427,31 @@ static void test_event_input(void) {
     [view keyDown:key_event(NSEventTypeKeyDown, 14, NO)];   // 缺省映射 E = Switch A（位 0）
     s2a_pad_snapshot down; read_ex(&down);
     expect((down.buttons & 1u) != 0 && down.host_timestamp_us != 0, "event snapshot carries the key and its host timestamp");
+    { s2a_pad_latency clear; s2a_pad_get_latency(&clear, 1); }   // 清掉前面用例留下的样本，下面只看这一次提交
+    uint64_t before_commit = s2a_pad_now_us();
     s2a_pad_record_commit(&down);
+    uint64_t after_commit = s2a_pad_now_us();
 
     uint64_t observed;
     { s2a_pad_snapshot snap; read_ex(&snap); observed = snap.notification_seq; }
-    __block uint64_t waited = 0;
+    __block int woke = -1;
     dispatch_semaphore_t started = dispatch_semaphore_create(0), done = dispatch_semaphore_create(0);
     dispatch_async(dispatch_get_global_queue(QOS_CLASS_USER_INITIATED, 0), ^{
         dispatch_semaphore_wait(started, DISPATCH_TIME_FOREVER);
-        uint64_t t0 = s2a_pad_now_us();
-        s2a_pad_wait(observed, t0 + 50000);
-        waited = s2a_pad_now_us() - t0;
+        woke = s2a_pad_wait(observed, s2a_pad_now_us() + 5000000);   // 截止放到 5 秒：判它为什么返回，不判用了多久（不受机器负载影响）
         dispatch_semaphore_signal(done);
     });
     dispatch_semaphore_signal(started);
     [NSThread sleepForTimeInterval:0.02];   // 让等待线程先进入条件变量；即使没进，序号变化也会让它立即返回
     [view keyUp:key_event(NSEventTypeKeyUp, 14, NO)];
-    expect(dispatch_semaphore_wait(done, dispatch_time(DISPATCH_TIME_NOW, 1000000000)) == 0, "pad wait completes after key up");
-    expect(waited < 50000, "key up wakes pad wait before the deadline");
+    expect(dispatch_semaphore_wait(done, dispatch_time(DISPATCH_TIME_NOW, 10 * NSEC_PER_SEC)) == 0, "pad wait completes after key up");
+    expect(woke == 1, "key up wakes pad wait because the notification sequence changed, not because the deadline passed");
 
+    // 延迟 = 提交时刻 − 按键的 host 时间戳：提交前后各取一次时钟，记下的值必须夹在两者之间（只依赖时间戳之差，不设绝对上限）
     s2a_pad_latency latency; s2a_pad_get_latency(&latency, 1);
-    expect(latency.samples >= 1 && latency.host_max_us < 50000, "committed event latency is recorded");
+    expect(latency.samples == 1 && latency.host_total_us == latency.host_max_us &&
+           latency.host_max_us >= before_commit - down.host_timestamp_us && latency.host_max_us <= after_commit - down.host_timestamp_us,
+           "committed event latency equals commit time minus the key's host timestamp");
 
     // 负对照（维护者要求）：事件驱动只发变化；长按 / 摇杆持续推时，没有新事件的那几拍 read_ex 仍必须返回完整的按住状态。
     [keys addObject:@14]; [keys addObject:@13]; sample_input();   // E = A，W = LS_UP
