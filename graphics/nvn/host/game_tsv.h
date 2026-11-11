@@ -114,4 +114,5 @@ static inline int s2a_present_decide(int explicit_set, int explicit_display, int
     return l3_result && !strcmp(l3_result, "need_l3") ? 0 : 1;
 }
 // 60 帧开关（S2A_FPS60，同 runtime/src/fps.c fps_on_at_start：只认整串 "0" 为关）：关 = 回游戏原帧率，档里的 present_interval display（显式或推导）也不生效
-static inline int s2a_present_fps60_gate(int display, const char *fps60_env) { return display && !(fps60_env && !strcmp(fps60_env, "0")); }
+// 11-11 维护者：60 帧改成玩家手动开（默认游戏原本的帧率）——放开出图间隔只在 S2A_FPS60=1 时；没设 / 0 / 别的值一律退回游戏自己的间隔
+static inline int s2a_present_fps60_gate(int display, const char *fps60_env) { return display && fps60_env && !strcmp(fps60_env, "1"); }

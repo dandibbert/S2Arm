@@ -59,7 +59,8 @@ static void *key_slot(int slot) { return g_fm ? g_fm->base + g_fm->key_page_off 
 static void host_store32(void *p, uint32_t v) { __atomic_store_n((uint32_t *)p, v, __ATOMIC_RELAXED); }
 // 起局开关只认 S2A_FPS60：S2A_FPS 是帧率上限（出图封顶，graphics/nvn nvn_fps.c、通用层 FramePacingPolicy），和游戏逻辑步长的 60 帧表是两件事
 //   （#619 审计 F-fps-cap-disables-table：原先 S2A_FPS=30 也算关，设置页上限选 30、60 帧开关留开时起局仍按关写表）
-static int fps_on_at_start(void) { const char *f = getenv("S2A_FPS60"); return !(f && !strcmp(f, "0")); }
+// 11-11 维护者：出包默认就是游戏原本的帧率，60 帧改成玩家手动开——只有 S2A_FPS60=1（设置页 / 启动器按款开了）才开；没设或 0 一律回游戏原生帧率
+static int fps_on_at_start(void) { const char *f = getenv("S2A_FPS60"); return f && !strcmp(f, "1"); }
 static _Atomic int g_on = 1, g_have;   // g_on：60 帧开 / 关（运行中可切）；g_have：这款有表（设置页据此决定显不显示开关）
 // 降档原因位（情报 10-28：通用模式没有热帽、低电量不降档）：热状态 ≥ 严重（2）或低电量模式开着 → 60 帧按关生效（同运行中关：w 行写回原值、
 //   槽写关时值、出图间隔退回游戏、社区帧率补丁跟随），原因去掉再恢复：热状态回到 ≤ 一般后稳 30 秒（防抖，同直连热帽 hle_nvn.c thermal_capped），

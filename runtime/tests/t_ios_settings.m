@@ -334,7 +334,7 @@ int main(int argc, char **argv) {
         //   ⓑ 用户在设置里关了 60 帧与宽屏（审计 #854 F-caps-beats-settings）→ 设置赢：S2A_FPS60=0、S2A_WIDESCREEN=0（widen.c 设置关先于清单判）
         {
             NSString *caps = [NSBundle.mainBundle.bundlePath stringByAppendingPathComponent:@"s2a_caps.tsv"];
-            check([@"widen\t1\t# 单测\nfps60\t1\t# 单测\n" writeToFile:caps atomically:YES encoding:NSUTF8StringEncoding error:nil], @"能力清单写进包目录");
+            check([@"widen\t1\t# 单测\nfps60\t1\t# 默认开：来源 fps.tsv\n" writeToFile:caps atomically:YES encoding:NSUTF8StringEncoding error:nil], @"能力清单写进包目录");   // 11-11：原因是速度已验证的来源，清单才替玩家开
             NSUserDefaults *std = NSUserDefaults.standardUserDefaults;
             for (int k = 0; k < 2; k++) {
                 [std removeObjectForKey:@"S2AFps60"]; [std removeObjectForKey:@"S2AWidescreen"];
@@ -359,7 +359,7 @@ int main(int argc, char **argv) {
             check([@"fps60\t0\t# 强信号：静态无来源\n" writeToFile:caps atomically:YES encoding:NSUTF8StringEncoding error:nil], @"未验证清单写进包目录");
             check(s2a_ios_caps_value("fps60") == 0, @"读到清单 fps60 0");
             NSUserDefaults *std = NSUserDefaults.standardUserDefaults;
-            NSString *names[] = {@"没动过", @"手动开", @"只存着老的 S2AFps60=YES"}, *wants[] = {@"S2A_FPS60=0 间隔=未设 来源=0", @"S2A_FPS60=1 间隔=未设 来源=1", @"S2A_FPS60=0 间隔=未设 来源=0"};
+            NSString *names[] = {@"没动过", @"手动开", @"只存着老的 S2AFps60=YES"}, *wants[] = {@"S2A_FPS60=未设 间隔=未设 来源=0", @"S2A_FPS60=1 间隔=未设 来源=1", @"S2A_FPS60=未设 间隔=未设 来源=0"};   // 11-11：清单不再写 S2A_FPS60（没设 = 原帧率）
             for (int k = 0; k < 3; k++) {
                 [std removeObjectForKey:@"S2AFps60"]; [std removeObjectForKey:@"S2AFps60Manual"];
                 if (k == 1) { [std setBool:YES forKey:@"S2AFps60Manual"]; [std setBool:YES forKey:@"S2AFps60"]; }
@@ -383,7 +383,7 @@ int main(int argc, char **argv) {
             s2a_ios_load_graphics_settings();
             const char *i = getenv("DM_PRESENT_INTERVAL");
             NSString *got = [NSString stringWithFormat:@"间隔=%@ 来源=%d", i ? @(i) : @"未设", s2a_fps60_display_source()];
-            check([got isEqual:@"间隔=未设 来源=1"], [NSString stringWithFormat:@"清单 fps60_display 1：期望 间隔=未设 来源=1 → 真结果 %@", got]);
+            check([got isEqual:@"间隔=未设 来源=0"], [NSString stringWithFormat:@"清单 fps60_display 1（11-11 起不算放开来源，玩家开才放开）：期望 间隔=未设 来源=0 → 真结果 %@", got]);
             [NSFileManager.defaultManager removeItemAtPath:caps error:nil]; clear_environment();
         }
 
@@ -392,7 +392,7 @@ int main(int argc, char **argv) {
         //   旧实现第 2 项红（重读只撤设置页登记的名字，清单写的 1 留着，设置那条「未设才写」写不进）
         {
             NSString *caps = [NSBundle.mainBundle.bundlePath stringByAppendingPathComponent:@"s2a_caps.tsv"];
-            check([@"fps60\t1\t# 单测\n" writeToFile:caps atomically:YES encoding:NSUTF8StringEncoding error:nil], @"fps60 1 清单写进包目录");
+            check([@"fps60\t1\t# 默认开：来源 fps.tsv\n" writeToFile:caps atomically:YES encoding:NSUTF8StringEncoding error:nil], @"fps60 1 清单写进包目录");   // 11-11：验证过的来源清单才写 1，立刻重启才有东西可撤
             NSUserDefaults *std = NSUserDefaults.standardUserDefaults; [std removeObjectForKey:@"S2AFps60"]; [std removeObjectForKey:@"S2AFps60Manual"];
             // 先清空设置页的登记表（进程级，前面 ⓓ 登记过 S2A_FPS60=1）：否则旧实现②会因为登记表里恰好是 1 被撤掉而碰巧过
             NSString *empty = [@"local.s2arm.settings-p180." stringByAppendingString:NSUUID.UUID.UUIDString];

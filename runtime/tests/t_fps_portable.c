@@ -121,7 +121,7 @@ int main(void) {
           "w main 0x1028 i32 61 *0x8*0x10\n"
           "w main 0xfffffffffffffffc i32 99\n"
           "w main 0x101c i32 99 if main 0xffffffffffffffff u8 == 1\n", f); fclose(f);
-    unsetenv("S2A_FPS_TABLE"); unsetenv("S2A_FPS60"); unsetenv("S2A_FPS_CAP");
+    unsetenv("S2A_FPS_TABLE"); setenv("S2A_FPS60", "1", 1);   /* 玩家开了（11-11 起默认原帧率） */ unsetenv("S2A_FPS_CAP");
     s2a_fps_start(dir);
     wait_flag(&chain_writes, "two-level pointer chain must reach CHAIN_B+0x10");
     pthread_mutex_lock(&mu); require(chain_value == 61, "chain row writes the table value 61"); pthread_mutex_unlock(&mu);

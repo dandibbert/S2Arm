@@ -36,7 +36,7 @@ int main(void) {
         //   运行中关 → 步长 1.0、秒 1/30；秒槽与步长槽相同 → 整行报红、两槽都不写（仍是上一张表留下的值）。旧实现：秒槽不写（仍 0）→ 红
         fflush(stdout); pid_t p = fork(); if (p < 0) return 1;
         if (!p) {
-            fails = 0; dm_fps_state = NULL; setenv("S2A_FSTEP", "0", 1); unsetenv("S2A_FPS60");
+            fails = 0; dm_fps_state = NULL; setenv("S2A_FSTEP", "0", 1); setenv("S2A_FPS60", "1", 1);   /* 玩家开了（11-11 起默认关） */
             char d2[] = "/tmp/t_fps_sec_XXXXXX"; if (!mkdtemp(d2)) _exit(99);
             char p2[256]; snprintf(p2, sizeof p2, "%s/fps.tsv", d2); FILE *f2 = fopen(p2, "w");
             fprintf(f2, "build 1234abcd5678ef00\nspeed 2040 0.5 2.0 2043\n"); fclose(f2);
@@ -68,7 +68,7 @@ int main(void) {
         //   ② 数据段本身超长（没有 #、超过 255 字节）→ 报「行超过」红、不写（main+0x101c 仍 0），它后面的 slot 2044 照常写（9）。旧实现：①日志有「不认的行」→ 红
         fflush(stdout); pid_t p = fork(); if (p < 0) return 1;
         if (!p) {
-            fails = 0; dm_fps_state = NULL; setenv("S2A_FSTEP", "0", 1); unsetenv("S2A_FPS60");
+            fails = 0; dm_fps_state = NULL; setenv("S2A_FSTEP", "0", 1); setenv("S2A_FPS60", "1", 1);   /* 玩家开了（11-11 起默认关） */
             char d4[] = "/tmp/t_fps_long_XXXXXX"; if (!mkdtemp(d4)) _exit(99);
             char p4[256]; snprintf(p4, sizeof p4, "%s/fps.tsv", d4); FILE *f4 = fopen(p4, "w");
             char cm[400]; memset(cm, 0, sizeof cm); for (int k = 0; k < 110; k++) strcat(cm, "注");   // 330 字节中文注释
@@ -90,9 +90,10 @@ int main(void) {
         int ws = 0; waitpid(p, &ws, 0); expect("超长行子进程：不符项数", 0, WIFEXITED(ws) ? WEXITSTATUS(ws) : -1);
     }
     // 起局开关只认 S2A_FPS60（#619 F-fps-cap-disables-table）：起局状态是进程级的，每种组合在子进程里起一次；表目录不存在 = 只走开关那一步。期望手写：
-    //   帧率上限 S2A_FPS=30、S2A_FPS60 未设 → 开 1；S2A_FPS60=0 → 关 0；S2A_FPS=30 且 S2A_FPS60=1 → 开 1；S2A_FPS=120 且 S2A_FPS60=0 → 关 0
-    static const struct { const char *cap, *f60; int want; } st[] = {{"30", NULL, 1}, {NULL, "0", 0}, {"30", "1", 1}, {"120", "0", 0}};
-    for (int i = 0; i < 4; i++) {
+    //   帧率上限 S2A_FPS=30、S2A_FPS60 未设 → 关 0（11-11：默认原帧率、玩家手动开）；S2A_FPS60=0 → 关 0；S2A_FPS=30 且 S2A_FPS60=1 → 开 1；S2A_FPS=120 且 S2A_FPS60=0 → 关 0；
+    //   S2A_FPS60=00（不是整串 1）→ 关 0
+    static const struct { const char *cap, *f60; int want; } st[] = {{"30", NULL, 0}, {NULL, "0", 0}, {"30", "1", 1}, {"120", "0", 0}, {NULL, "00", 0}};
+    for (int i = 0; i < 5; i++) {
         fflush(stdout); pid_t p = fork(); if (p < 0) return 1;
         if (!p) {
             if (st[i].cap) setenv("S2A_FPS", st[i].cap, 1); else unsetenv("S2A_FPS");
@@ -129,7 +130,7 @@ int main(void) {
         fprintf(g, "build 1234abcd\nw main 0x1000 i32 60\nslot 2041 f32 200 100\n"); fclose(g);
         fflush(stdout); pid_t p = fork(); if (p < 0) return 1;
         if (!p) {
-            fails = 0; setenv("S2A_FPS_TABLE", p2, 1); unsetenv("S2A_FPS"); unsetenv("S2A_FPS60");
+            fails = 0; setenv("S2A_FPS_TABLE", p2, 1); unsetenv("S2A_FPS"); setenv("S2A_FPS60", "1", 1);   /* 玩家开了 */
             s2a_fps_start(dir); usleep(250000);
             int32_t a; memcpy(&a, img + 0x1000, 4); expect("build 只有 8 位前缀：整表不用，main+0x1000 不写（仍 0）", 0, a);
             float f2; memcpy(&f2, img + 0x4000 + 2041 * 8, 4); expect("build 只有 8 位前缀：slot 2041 不写（仍 0）", 0, (long)(f2 * 1000));
@@ -138,7 +139,7 @@ int main(void) {
         int ws = 0; waitpid(p, &ws, 0);
         expect("短构建号子进程：不符项数", 0, WIFEXITED(ws) ? WEXITSTATUS(ws) : -1);
     }
-    unsetenv("DM_PRESENT_INTERVAL"); unsetenv("S2A_FPS"); unsetenv("S2A_FPS60"); unsetenv("S2A_FPS_TABLE");
+    unsetenv("DM_PRESENT_INTERVAL"); unsetenv("S2A_FPS"); setenv("S2A_FPS60", "1", 1); unsetenv("S2A_FPS_TABLE");   /* 玩家开了 */
     setenv("S2A_FPS_CAP", "0", 1);   // 写入线程不按真实时间判降档：下面直接喂 s2a_fps_cap_tick 模拟时间
     s2a_fps_start(dir);
     usleep(250000);
@@ -242,7 +243,7 @@ int main(void) {
         expect("普查 A/B 模式、60 帧没开：平时原因 3", 3, s2a_fps_cap_reason());
         s2a_fps_ab_set(2); expect("普查 A/B 模式、60 帧没开：阶段 2 放开 → 原因 0", 0, s2a_fps_cap_reason());
         s2a_fps_ab_set(0); expect("普查 A/B 模式、60 帧没开：测完回原因 3", 3, s2a_fps_cap_reason());
-        unsetenv("S2A_FPS60"); expect("普查 A/B 模式、60 帧开着：原因 0（不受影响）", 0, s2a_fps_cap_reason()); unsetenv("S2A_FPS_AB"); }
+        setenv("S2A_FPS60", "1", 1); expect("普查 A/B 模式、60 帧开着：原因 0（不受影响）", 0, s2a_fps_cap_reason()); unsetenv("S2A_FPS_AB"); }
     if (fails) printf("✗ t_fps：%d 项不符\n", fails); else printf("✓ t_fps：帧率表写入 / 条件 / 键页只读改可写 / 动态步长 / 宿主帧步 / 退回游戏间隔 / 热与低电量降档全过\n");
     return fails != 0;
 }

@@ -33,19 +33,17 @@ int main(void) {
     { pid_t p = fork(); if (p < 0) return 1;
       if (!p) { unsetenv("S2A_WIDEN_CAPS"); unsetenv("S2A_FPS60");
                 s2a_caps_apply(T);
-                _exit((getenv("S2A_WIDEN_CAPS") && !strcmp(getenv("S2A_WIDEN_CAPS"), "1") &&
-                       getenv("S2A_FPS60") && !strcmp(getenv("S2A_FPS60"), "1")) ? 0 : 1); }
+                _exit((getenv("S2A_WIDEN_CAPS") && !strcmp(getenv("S2A_WIDEN_CAPS"), "1") && !getenv("S2A_FPS60")) ? 0 : 1); }
       int ws = 0; waitpid(p, &ws, 0);
-      expect("② widen / fps60 都未设：清单都设 1", "0", WIFEXITED(ws) ? (WEXITSTATUS(ws) ? "1" : "0") : "崩"); }
+      expect("② widen / fps60 都未设：清单设 widen 1；fps60 不替玩家设（11-11：60 帧玩家手动开）", "0", WIFEXITED(ws) ? (WEXITSTATUS(ws) ? "1" : "0") : "崩"); }
 
     // ③ S2A_WIDEN_CAPS 已设 0（启动环境）：不覆盖
     { pid_t p = fork(); if (p < 0) return 1;
       if (!p) { setenv("S2A_WIDEN_CAPS", "0", 1); unsetenv("S2A_FPS60");
                 s2a_caps_apply(T);
-                _exit((getenv("S2A_WIDEN_CAPS") && !strcmp(getenv("S2A_WIDEN_CAPS"), "0") &&
-                       getenv("S2A_FPS60") && !strcmp(getenv("S2A_FPS60"), "1")) ? 0 : 1); }
+                _exit((getenv("S2A_WIDEN_CAPS") && !strcmp(getenv("S2A_WIDEN_CAPS"), "0") && !getenv("S2A_FPS60")) ? 0 : 1); }
       int ws = 0; waitpid(p, &ws, 0);
-      expect("③ S2A_WIDEN_CAPS=0（启动环境）：不覆盖，fps60 设 1", "0", WIFEXITED(ws) ? (WEXITSTATUS(ws) ? "1" : "0") : "崩"); }
+      expect("③ S2A_WIDEN_CAPS=0（启动环境）：不覆盖，fps60 不替玩家设", "0", WIFEXITED(ws) ? (WEXITSTATUS(ws) ? "1" : "0") : "崩"); }
 
     // ④ S2A_FPS60 已设 0（启动环境）：不覆盖
     { pid_t p = fork(); if (p < 0) return 1;
@@ -63,21 +61,39 @@ int main(void) {
     { pid_t p = fork(); if (p < 0) return 1;
       if (!p) { unsetenv("S2A_WIDEN_CAPS"); unsetenv("S2A_FPS60");
                 s2a_caps_apply(T);
-                _exit((getenv("S2A_WIDEN_CAPS") && !strcmp(getenv("S2A_WIDEN_CAPS"), "0") &&
-                       getenv("S2A_FPS60") && !strcmp(getenv("S2A_FPS60"), "1")) ? 0 : 1); }
+                _exit((getenv("S2A_WIDEN_CAPS") && !strcmp(getenv("S2A_WIDEN_CAPS"), "0") && !getenv("S2A_FPS60")) ? 0 : 1); }
       int ws = 0; waitpid(p, &ws, 0);
-      expect("⑤ 清单 widen 0（发布包未验）：S2A_WIDEN_CAPS 设 0（显式关），fps60 设 1", "0", WIFEXITED(ws) ? (WEXITSTATUS(ws) ? "1" : "0") : "崩"); }
+      expect("⑤ 清单 widen 0（发布包未验）：S2A_WIDEN_CAPS 设 0（显式关），fps60 不替玩家设", "0", WIFEXITED(ws) ? (WEXITSTATUS(ws) ? "1" : "0") : "崩"); }
 
     // ⑥ 清单 fps60 0（发布包未验）：S2A_FPS60 设 0；已设 S2A_FPS60=1（启动环境）时不覆盖
     f = fopen(path, "w"); fprintf(f, "fps60\t0\t# 未验：无登记\n"); fclose(f);
     { pid_t p = fork(); if (p < 0) return 1;
-      if (!p) { unsetenv("S2A_FPS60"); s2a_caps_apply(T); _exit(getenv("S2A_FPS60") && !strcmp(getenv("S2A_FPS60"), "0") ? 0 : 1); }
+      if (!p) { unsetenv("S2A_FPS60"); s2a_caps_apply(T); _exit(!getenv("S2A_FPS60") ? 0 : 1); }
       int ws = 0; waitpid(p, &ws, 0);
-      expect("⑥ 清单 fps60 0：S2A_FPS60 设 0", "0", WIFEXITED(ws) ? (WEXITSTATUS(ws) ? "1" : "0") : "崩"); }
+      expect("⑥ 清单 fps60 0：不写 S2A_FPS60（没设 = 原帧率）", "0", WIFEXITED(ws) ? (WEXITSTATUS(ws) ? "1" : "0") : "崩"); }
     { pid_t p = fork(); if (p < 0) return 1;
       if (!p) { setenv("S2A_FPS60", "1", 1); s2a_caps_apply(T); _exit(!strcmp(getenv("S2A_FPS60"), "1") ? 0 : 1); }
       int ws = 0; waitpid(p, &ws, 0);
       expect("⑥ 启动环境 S2A_FPS60=1 时清单的 0 不覆盖", "0", WIFEXITED(ws) ? (WEXITSTATUS(ws) ? "1" : "0") : "崩"); }
+    // ⑥b 11-11 速度已验证正确的款保留默认 60（清单原因认来源）：期望手算——fps.tsv / A/B 绿 / 原生 60 → 玩家没设时设 1；
+    //   全引擎档 / Unity·UE 推导 → 不设；玩家显式 0 → 照旧 0
+    { static const struct { const char *why, *env, *want; } vc[] = {
+          {"默认开：来源 fps.tsv", NULL, "1"},
+          {"默认开：来源 逻辑速度同局 A/B 绿（ρ 1.01、q 0.99，放开出图间隔）", NULL, "1"},
+          {"默认开：来源 游戏原生 60 帧", NULL, "1"},
+          {"默认开：来源 引擎通用：放开出图间隔（全引擎，同局 A/B 判红才关）", NULL, NULL},
+          {"默认开：来源 引擎通用第一层（Unity / UE4 放开交换间隔）", NULL, NULL},
+          {"默认开：来源 fps.tsv", "0", "0"}};
+      for (int i = 0; i < 6; i++) {
+          f = fopen(path, "w"); fprintf(f, "fps60\t1\t# %s\n", vc[i].why); fclose(f);
+          fflush(stdout); pid_t p = fork(); if (p < 0) return 1;
+          if (!p) { if (vc[i].env) setenv("S2A_FPS60", vc[i].env, 1); else unsetenv("S2A_FPS60");
+                    s2a_caps_apply(T); const char *x = getenv("S2A_FPS60");
+                    _exit(vc[i].want ? (x && !strcmp(x, vc[i].want) ? 0 : 1) : (!x ? 0 : 1)); }
+          int ws = 0; waitpid(p, &ws, 0); char what[256];
+          snprintf(what, sizeof what, "⑥b 清单 fps60 1「%s」、玩家%s → S2A_FPS60 %s", vc[i].why, vc[i].env ? "设了 0" : "没设", vc[i].want ? vc[i].want : "不设");
+          expect(what, "0", WIFEXITED(ws) ? (WEXITSTATUS(ws) ? "1" : "0") : "崩"); } }
+    f = fopen(path, "w"); fprintf(f, "fps60\t0\t# 未验：无登记\n"); fclose(f);
     // ⑦ 普查同局 A/B 模式（S2A_FPS_AB=1）：清单 fps60 0 → 另设 DM_PRESENT_INTERVAL=display（平时由 fps.c 降档原因 3 退回原帧率）；没开 A/B 模式、或已显式给了间隔都不设
     { pid_t p = fork(); if (p < 0) return 1;
       if (!p) { unsetenv("S2A_FPS60"); unsetenv("DM_PRESENT_INTERVAL"); setenv("S2A_FPS_AB", "1", 1); s2a_caps_apply(T);
@@ -108,10 +124,10 @@ int main(void) {
         fflush(stdout); pid_t p = fork(); if (p < 0) return 1;
         if (!p) { unsetenv("S2A_WIDEN_CAPS"); if (k == 1) setenv("S2A_FPS60", "1", 1); else unsetenv("S2A_FPS60");
                   s2a_caps_apply(T); const char *w = getenv("S2A_WIDEN_CAPS"), *x = getenv("S2A_FPS60");
-                  const char *ww = k == 2 ? "0" : "1", *wx = k == 0 ? "0" : "1";
-                  _exit(w && x && !strcmp(w, ww) && !strcmp(x, wx) ? 0 : 1); }
+                  const char *ww = k == 2 ? "0" : "1";   // 60 帧：清单 / 补丁都不再写 S2A_FPS60（11-11），只有 ⑨ 启动环境给的 1 留着
+                  _exit(w && !strcmp(w, ww) && (k == 1 ? x && !strcmp(x, "1") : !x) ? 0 : 1); }
         int ws = 0; waitpid(p, &ws, 0);
-        expect(k == 0 ? "⑧ 补丁：满屏取补丁 1、60 帧取例外 0" : k == 1 ? "⑨ 启动环境 S2A_FPS60=1 压过补丁例外" : "⑩ 补丁程序号不对：整份不用、按包内清单",
+        expect(k == 0 ? "⑧ 补丁：满屏取补丁 1、60 帧不写环境（玩家手动开）" : k == 1 ? "⑨ 启动环境 S2A_FPS60=1 照旧" : "⑩ 补丁程序号不对：整份不用、按包内清单（60 帧不写环境）",
                "0", WIFEXITED(ws) ? (WEXITSTATUS(ws) ? "1" : "0") : "崩");
     }
     // ⑪ 补丁 [fps]：写成 <补丁目录>/.fps.tsv（首行 build = 补丁编写构建），S2A_FPS_TABLE 指过去；⑫ 启动环境已给 S2A_FPS_TABLE → 不覆盖

@@ -12,7 +12,10 @@
 void s2a_caps_apply(const char *dir);
 // 进程内重启前调（ios/settings.m s2a_ios_reload_graphics_settings）：撤掉本清单写进进程环境、值没被别处改过的变量，清掉读到的清单值；之后调用方按「设置 → 清单」重放（审计 P1-80）
 void s2a_caps_reset(void);
-// 本局放开出图间隔的来源（清单 fps60_display 1，或清单 fps60 0 而设置页手动开了 S2A_FPS60=1）；开关不在这里套（graphics/nvn/host/game_profile.h DM_GAME_PRESENT_DISPLAY）
+// 本局放开出图间隔的来源（11-11 起只看玩家开关：S2A_FPS60=1；清单 fps60_display 不再算来源）；开关不在这里套（graphics/nvn/host/game_profile.h DM_GAME_PRESENT_DISPLAY）
 int s2a_fps60_display_source(void);
+// 清单 fps60 行算不算「速度已验证正确、默认开」（11-11）：值 1 且原因含「fps.tsv」「逻辑速度同局 A/B 绿」「游戏原生 60 帧」之一。
+//   宿主（caps.c）与 iOS 设置页缺省显示值共用这一份规则；Mac 启动器（pack/jobs/community.py）照抄同三个字样，改字样要两边同步
+int s2a_caps_fps60_verified(const char *val, const char *why);
 
 #endif
