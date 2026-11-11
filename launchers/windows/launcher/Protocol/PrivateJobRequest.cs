@@ -82,7 +82,17 @@ public sealed class PrivateJobRequest : IDisposable
                 !rule.IdentityReference.Equals(system) && !rule.IdentityReference.Equals(administrators))
                 throw new IOException("Private job root grants another identity access.");
         }
-        if (!acl.AreAccessRulesProtected) throw new IOException("Private job root inherits permissions.");
+        if (!acl.AreAccessRulesProtected)
+        {
+            // 自愈（#580）：目录已存在、属主是本人、不是重解析点、上面也没有给其他身份的权限（都已核过），只是还继承上级——
+            //   常见于先用 Directory.CreateDirectory 建了子目录、顺带建出的父目录（见 EnsurePrivateRoot 的说明）。原先这里直接报错，
+            //   玩家每次添加游戏都卡在「Private job root inherits permissions」，换游戏库位置也没用（这个目录不在游戏库里）。
+            //   就地改成不继承、把现有规则原样转成显式规则：有效权限不变，只是以后上级目录的变动不再传进来
+            acl.SetAccessRuleProtection(isProtected: true, preserveInheritance: true);
+            directory.SetAccessControl(acl);
+            directory.Refresh();
+            if (!directory.GetAccessControl().AreAccessRulesProtected) throw new IOException("Private job root inherits permissions.");
+        }
         return path;
     }
 

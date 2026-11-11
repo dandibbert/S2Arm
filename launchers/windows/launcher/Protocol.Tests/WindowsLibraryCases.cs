@@ -48,6 +48,24 @@ internal static class WindowsLibraryCases
             try { using var bad = PrivateJobRequest.Create(weak, "{}"); throw new Exception("accepted public inherited request access"); }
             catch (IOException) { check(true, "reject ACL granting inherited request access to Everyone"); }
             check(!Directory.EnumerateFiles(weak).Any(), "rejected ACL writes no request data");
+            // #580：私有目录被 Directory.CreateDirectory 先建出来（继承临时目录的权限：本人 / SYSTEM / Administrators），原先永远报 inherits permissions
+            var inherited = Path.Combine(root, "Inherited");
+            Directory.CreateDirectory(Path.Combine(inherited, "jobs"));
+            {   // 玩家机上普通用户建的目录属主就是本人；管理员会话里缺省属主是 Administrators 组，夹具改回本人，只留「继承」这一个问题。
+                //   只写属主这一节（新建的描述符只设了 Owner）：取回整套再写回会顺带把权限改成不继承，夹具就不像玩家的目录了
+                var own = new DirectorySecurity();
+                own.SetOwner(sid);
+                new DirectoryInfo(inherited).SetAccessControl(own);
+            }
+            check(!new DirectoryInfo(inherited).GetAccessControl().AreAccessRulesProtected, "fixture: directory starts with inherited DACL");
+            check(sid.Equals(new DirectoryInfo(inherited).GetAccessControl().GetOwner(typeof(SecurityIdentifier))), "fixture: directory owned by the current user");
+            using (var healed = PrivateJobRequest.Create(inherited, "{}"))
+                check(File.Exists(healed.FilePath), "inherited-only private root is healed and accepts a request");
+            var after = new DirectoryInfo(inherited).GetAccessControl();
+            check(after.AreAccessRulesProtected, "healed private root no longer inherits");
+            check(after.GetAccessRules(true, false, typeof(SecurityIdentifier)).Cast<FileSystemAccessRule>()
+                .Any(r => r.IdentityReference.Equals(sid) && r.AccessControlType == AccessControlType.Allow && (r.FileSystemRights & FileSystemRights.FullControl) == FileSystemRights.FullControl),
+                "healed private root keeps the current user's full control as an explicit rule");
             var engine = Path.Combine(root, "中文 & %S2A_MARKER% !", "Engine");
             var runtime = Path.Combine(root, "Runtime");
             Directory.CreateDirectory(Path.Combine(engine, "pack", "jobs"));

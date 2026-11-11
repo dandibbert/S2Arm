@@ -470,6 +470,14 @@ class InstallWin(unittest.TestCase):
                 self.assertEqual(c.exception.code, 75)
             finally: install_win.plumesign_path = old
 
+    def test_inherited_rust_log_does_not_hide_completion(self):
+        # #585：玩家环境里 RUST_LOG=warn → info 级的「Installation complete」被压掉，装好了也判失败。假 plumesign 按 RUST_LOG 决定打不打这行
+        with tempfile.TemporaryDirectory() as d:
+            exe = self.fake(d, "import os\nif os.environ.get('RUST_LOG') in ('info', 'debug', 'trace'): print('INFO Installation complete')\n")
+            with patch.dict(os.environ, {'RUST_LOG': 'warn'}):
+                install_win.sign_install(exe, Path(d, 'x.ipa'), 7, None, Path(d, 'p.log'), Path(d, 'o.ipa'))   # 不抛 = 判成功
+            self.assertIn('Installation complete', Path(d, 'p.log').read_text(encoding='utf-8'))
+
     def run_fake(self, body):
         with tempfile.TemporaryDirectory() as d:
             exe = self.fake(d, body); got = {}
