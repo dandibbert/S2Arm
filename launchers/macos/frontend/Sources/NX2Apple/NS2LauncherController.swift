@@ -15,6 +15,24 @@ final class NS2LauncherController: ObservableObject {
     @Published private(set) var phase: Phase = .off
     @Published private(set) var detail = ""
     @Published private(set) var deviceName = "Switch 2 Pro"
+    /// 连接程序报的对外输出型号（ns2_kind：1 Pro、2 Joy-Con 左、3 右、4 左右一对；0 = 没连 / 旧连接程序没报）
+    @Published private(set) var kind = 0
+
+    /// 弹窗标题：照连着的型号写；没连 / 还不知道型号时写通用的「Switch 手柄」（不分代：一代 Joy-Con 以后也在这里）（#520）
+    func title(simplifiedChinese zh: Bool) -> String { Self.title(kind: kind, simplifiedChinese: zh) }
+    /// 状态行里的型号；连接程序报的是 ns2_kind 数字，旧连接程序没这个字段时当 0
+    nonisolated static func kind(from object: [String: Any]) -> Int {
+        (object["kind"] as? NSNumber)?.intValue ?? 0
+    }
+    nonisolated static func title(kind: Int, simplifiedChinese zh: Bool) -> String {
+        switch kind {
+        case 1: return "Switch 2 Pro"
+        case 2: return "Joy-Con 2 (L)"
+        case 3: return "Joy-Con 2 (R)"
+        case 4: return "Joy-Con 2 (L + R)"
+        default: return zh ? "Switch 手柄" : "Switch Controller"
+        }
+    }
 
     private let defaults: UserDefaults
     let socketURL: URL
@@ -130,6 +148,7 @@ final class NS2LauncherController: ObservableObject {
         phase = .starting
         detail = "正在启动蓝牙连接。首次使用时，请在 macOS 提示中允许。"
         deviceName = "Switch 2 Pro"
+        kind = 0
         buffer.removeAll(keepingCapacity: true)
         intentionalStop = false
 
@@ -153,6 +172,7 @@ final class NS2LauncherController: ObservableObject {
             Task { @MainActor [weak self] in
                 guard let self, self.process === finished else { return }
                 self.process = nil
+                self.kind = 0
                 self.output?.fileHandleForReading.readabilityHandler = nil
                 self.output = nil
                 if !self.intentionalStop {
@@ -173,6 +193,7 @@ final class NS2LauncherController: ObservableObject {
 
     private func stopProcess() {
         intentionalStop = true
+        kind = 0
         output?.fileHandleForReading.readabilityHandler = nil
         output = nil
         guard let task = process else { return }
@@ -194,6 +215,7 @@ final class NS2LauncherController: ObservableObject {
 
     private func apply(status code: Int, _ object: [String: Any]) {
         if let name = object["name"] as? String, !name.isEmpty { deviceName = name }
+        kind = Self.kind(from: object)
         switch code {
         case 0:
             phase = .starting

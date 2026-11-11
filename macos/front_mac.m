@@ -1030,7 +1030,8 @@ static __weak S2AMacDelegate *g_delegate;
         controller == NS2_STATUS_CONNECTING || controller == NS2_STATUS_INITIALIZING ? @"连接中" :
         controller == NS2_STATUS_UNAVAILABLE ? @"蓝牙不可用，请检查授权" :
         controller == NS2_STATUS_ERROR ? @"连接失败，请重试" : @"未连接";
-    self.controllerStatus.title = [@"Switch 2 Pro：" stringByAppendingString:state];
+    // 菜单这一行照连着的型号写（Joy-Con 2 左 / 右 / 一对，#520）；没连时写 Switch 手柄
+    self.controllerStatus.title = [NSString stringWithFormat:@"%s：%@", s2a_mac_ns2_kind_name(s2a_mac_ns2_kind()), state];
     // 存档不能原子提交（审计 P2-13；判定与 iOS 共用 runtime/src/direct_prompt.c s2a_save_atomic_poll）：非 0 提示一次
     if (s2a_save_atomic_poll()) [self.banner showTitle:@S2A_DPROMPT_SAVE_ATOMIC_TITLE body:@S2A_DPROMPT_SAVE_ATOMIC_MAC accept:nil decline:nil seconds:15];
     // 横幅正显示别的提醒时先不查，等它收起再提示，免得互相盖掉

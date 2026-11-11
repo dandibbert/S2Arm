@@ -85,3 +85,11 @@ int ns2_scan_wants_other_side(ns2_kind only, int only_ready, int only_failed) {
 int ns2_link_failure_stops_scan(ns2_kind failed) {
     return failed != NS2_KIND_JOYCON_L && failed != NS2_KIND_JOYCON_R;
 }
+
+ns2_kind ns2_output_kind(ns2_kind a, int a_present, ns2_kind b, int b_present) {
+    int a_jc = a == NS2_KIND_JOYCON_L || a == NS2_KIND_JOYCON_R, b_jc = b == NS2_KIND_JOYCON_L || b == NS2_KIND_JOYCON_R;
+    if (a_present && b_present && a_jc && b_jc && a != b) return NS2_KIND_JOYCON_PAIR;
+    if (a_present) return a;
+    if (b_present) return b;
+    return NS2_KIND_NONE;
+}

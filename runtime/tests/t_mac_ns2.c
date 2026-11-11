@@ -18,6 +18,7 @@ static ns2_status_callback status_callback;
 static ns2_motion sample;
 static ns2_vibration sent[2];
 static int starts, scans, stops, shutdowns, sends, imu;
+static ns2_kind output_kind = NS2_KIND_JOYCON_L;   // 直连模式的对外输出型号（#520）
 // NS2 input report 0x30: GL is bit 19 and GR is bit 20
 // (switch2_controller_research bluetooth_interface.md).
 enum { NS2_TEST_BUTTON_GL = 19, NS2_TEST_BUTTON_GR = 20 };
@@ -32,6 +33,7 @@ int ns2_shutdown(const char *reason, unsigned timeout) {
 void ns2_stop_rumble(void) { stops++; }
 void ns2_set_motion_enabled(int enabled) { imu = enabled; }
 void ns2_get_motion(ns2_motion *out) { *out = sample; }
+ns2_kind ns2_get_output_kind(void) { return output_kind; }
 void ns2_send_pair_lease(const ns2_vibration pair[2], unsigned duration) {
     assert(duration == 1000); memcpy(sent, pair, sizeof sent); sends++;
 }
@@ -69,6 +71,7 @@ int main(void) {
     assert(s2a_mac_ns2_connect() && starts == 1 && imu);
     s2a_mac_ns2_focus(1);
     status_callback(NS2_STATUS_READY, "test connected", NULL);
+    assert(s2a_mac_ns2_kind() == NS2_KIND_JOYCON_L);   // 直连模式：型号取传输层的对外输出形态
     uint64_t session = s2a_mac_ns2_rumble_session();
     assert(session);
     // Physical Nintendo A, left stick up, and full independent right stick.

@@ -7,7 +7,8 @@
 #include <stdint.h>
 
 #define NS2_RELAY_MAGIC 0x534E3252u
-#define NS2_RELAY_VERSION 1u
+// 2：加 kind（对外输出型号，ns2_get_output_kind；#520）。两端版本不同时各自记一行日志并断开，不猜字段
+#define NS2_RELAY_VERSION 2u
 
 typedef enum {
     NS2_RELAY_INPUT = 1,
@@ -28,10 +29,12 @@ typedef struct {
     uint8_t status;
     uint8_t motion_known;
     uint8_t enabled;
-    uint8_t reserved[4];
+    uint8_t kind;   // ns2_kind；只在 INPUT 包里有意义
+    uint8_t reserved[3];
     ns2_vibration vibration[2];
     uint32_t duration_ms;
     uint32_t reserved2;
 } ns2_relay_packet;
+
 
 #endif

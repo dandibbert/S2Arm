@@ -41,6 +41,7 @@ static void emit_status(ns2_status status, const char *message, void *context) {
         int wasReady = snapshot.ready;
         snapshot.status = status;
         snapshot.ready = status == NS2_STATUS_READY;
+        snapshot.kind = (uint8_t)ns2_get_output_kind();
         if (wasReady != snapshot.ready) {
             snapshot.epoch++;
             memset(&snapshot.state, 0, sizeof snapshot.state);
@@ -56,6 +57,7 @@ static void emit_status(ns2_status status, const char *message, void *context) {
             @"message": message ? [NSString stringWithUTF8String:message] ?: @"" : @"",
             @"name": info.name[0] ? [NSString stringWithUTF8String:info.name] ?: @"" : @"",
             @"identifier": info.identifier[0] ? [NSString stringWithUTF8String:info.identifier] ?: @"" : @"",
+            @"kind": @(ns2_get_output_kind()),   // ns2_kind：1 Pro、2 Joy-Con 左、3 右、4 左右一对（启动器面板标题，#520）
         } mutableCopy];
         if (info.battery_level_known) payload[@"battery"] = @(info.battery_level);
         NSData *data = [NSJSONSerialization dataWithJSONObject:payload options:0 error:nil];
@@ -68,8 +70,10 @@ static void emit_status(ns2_status status, const char *message, void *context) {
 
 static void receive_input(const ns2_state *state, void *context) {
     (void)context;
+    ns2_kind kind = ns2_get_output_kind();   // 拼对 / 拆对不一定伴随状态变化，跟着输入刷新
     pthread_mutex_lock(&relayLock);
     if (snapshot.ready) snapshot.state = *state;
+    snapshot.kind = (uint8_t)kind;
     pthread_mutex_unlock(&relayLock);
 }
 
@@ -114,7 +118,10 @@ static void *client_main(void *context) {
     int fd = (int)(intptr_t)context;
     ns2_relay_packet packet;
     while (receive_all(fd, &packet, sizeof packet)) {
-        if (packet.magic != NS2_RELAY_MAGIC || packet.version != NS2_RELAY_VERSION) break;
+        if (packet.magic != NS2_RELAY_MAGIC || packet.version != NS2_RELAY_VERSION) {
+            fprintf(stderr, "[NS2 Relay] 游戏端通道版本 %u，本端 %u：断开（启动器与游戏宿主版本不一致）\n", packet.version, NS2_RELAY_VERSION);
+            break;
+        }
         switch (packet.type) {
         case NS2_RELAY_RUMBLE:
             ns2_send_pair_lease(packet.vibration, packet.duration_ms);

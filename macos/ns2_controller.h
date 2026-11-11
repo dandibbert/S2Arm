@@ -16,6 +16,9 @@ ns2_status s2a_mac_ns2_status(void);
 // 通道模式下开局后还没接上过（IDLE）时要不要去连：通道文件在（S2Arm 的连接程序启动时建、退出时删）才连。
 //   玩家开局后才在 S2Arm 连手柄也能接回；只用键盘、没开连接程序时什么都不做（游戏窗口每秒问一次）
 int s2a_mac_ns2_relay_due(ns2_status status, const char *relay);
+// 当前连着的型号（通道 v2 / 直连都一样；没就绪为 NONE）与显示名（菜单「手柄」一行，#520）
+ns2_kind s2a_mac_ns2_kind(void);
+const char *s2a_mac_ns2_kind_name(ns2_kind kind);
 void s2a_mac_ns2_set_motion_enabled(int enabled);
 // 震动（游戏的 s2a_pad_rumble_* 导出在 macos/front_mac.m，Switch 2 Pro 连着时交到这里；会话号与系统手柄那路不重叠）
 uint64_t s2a_mac_ns2_rumble_session(void);

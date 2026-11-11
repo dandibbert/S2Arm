@@ -14,7 +14,8 @@ typedef struct { uint64_t buttons; uint16_t lx, ly, rx, ry; } ns2_raw_input;
 // Pure input decoding: report_id is 5 or 9, axes are uncalibrated 12-bit values; BLE data omits the report-ID prefix.
 int ns2_decode_input_report(unsigned report_id, const uint8_t *bytes, size_t length, ns2_raw_input *out);
 // 型号（广播厂商数据产品号）与 Joy-Con 2 单只横握（NS2JoyCon.c；协议依据见该文件开头，未在我方实机验证）
-typedef enum { NS2_KIND_NONE, NS2_KIND_PRO, NS2_KIND_JOYCON_L, NS2_KIND_JOYCON_R } ns2_kind;
+// 型号；NS2_KIND_JOYCON_PAIR 只用于「对外输出形态」（左右两只拼成一对），广播 / 链路上不会出现
+typedef enum { NS2_KIND_NONE, NS2_KIND_PRO, NS2_KIND_JOYCON_L, NS2_KIND_JOYCON_R, NS2_KIND_JOYCON_PAIR } ns2_kind;
 enum { NS2_SIDE_SL_L = 1, NS2_SIDE_SR_L = 2, NS2_SIDE_SL_R = 4, NS2_SIDE_SR_R = 8 };
 ns2_kind ns2_kind_from_manufacturer(const uint8_t *manufacturer, size_t length);
 // report05（不含报告号前缀）里 Joy-Con 的 SL / SR；返回 NS2_SIDE_* 位
@@ -42,6 +43,11 @@ void ns2_joycon_pair_state(const ns2_state *left, const ns2_state *right, ns2_st
 int ns2_scan_wants_other_side(ns2_kind only, int only_ready, int only_failed);
 //   一条链路失败时停不停扫描——Pro 停（同改前）；Joy-Con 不停，另一侧可能正在扫描窗口里等着被找到
 int ns2_link_failure_stops_scan(ns2_kind failed);
+// 对外输出形态（纯函数）：两条链路都在出输入且一左一右 → 一对；否则取在出输入的那条的型号；都没有 → NONE。
+//   与 NS2Transport.m 的 pair_locked / 单只横握判断同一条规则，宿主据此显示型号、选手柄样式（#520）
+ns2_kind ns2_output_kind(ns2_kind a, int a_present, ns2_kind b, int b_present);
+// 当前对外输出形态（线程安全，读传输层两条链路的现状）
+ns2_kind ns2_get_output_kind(void);
 // 复制最近运动样本，超过 250 ms 或断开后清空；不产生设备访问。
 // Copy the latest motion sample, clearing it after 250 ms or disconnection without accessing hardware.
 void ns2_get_motion(ns2_motion *out);

@@ -16,7 +16,7 @@ struct Switch2ProConnectionPopover: View {
                 Image(systemName: "gamecontroller.fill")
                     .font(.system(size: 20, weight: .semibold))
                 VStack(alignment: .leading, spacing: 2) {
-                    Text("Switch 2 Pro").font(.manrope(17, .bold))
+                    Text(controller.title(simplifiedChinese: zh)).font(.manrope(17, .bold))
                     HStack(spacing: 7) {
                         Circle().fill(Color(nsColor: controller.buttonColor)).frame(width: 8, height: 8)
                         Text(controller.buttonStatus).font(.manrope(12.5, .semibold)).foregroundStyle(.secondary)

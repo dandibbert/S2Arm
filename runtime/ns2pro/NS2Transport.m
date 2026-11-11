@@ -1209,6 +1209,12 @@ static NS2Bridge *bridge;
 int ns2_start(ns2_state_callback state, ns2_status_callback status, void *context) {
     return ns2_start_with_motion(state, status, NULL, context);
 }
+ns2_kind ns2_get_output_kind(void) {
+    pthread_mutex_lock(&stateMu);
+    ns2_kind kind = ns2_output_kind(linkShared[0].kind, linkShared[0].present, linkShared[1].kind, linkShared[1].present);
+    pthread_mutex_unlock(&stateMu);
+    return kind;
+}
 int ns2_rescan(void) {
     __block int accepted = 0;
     on_queue(^{ accepted = [bridge rescan]; });

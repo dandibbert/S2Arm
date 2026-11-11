@@ -789,7 +789,7 @@ int main(int argc, const char **argv) {
     s2a_pad_set_motion_enabled(1);
     ns2_relay_packet motionPacket = {
         .magic = NS2_RELAY_MAGIC, .version = NS2_RELAY_VERSION, .type = NS2_RELAY_INPUT,
-        .ready = 1, .status = NS2_STATUS_READY, .motion_known = 1,
+        .ready = 1, .status = NS2_STATUS_READY, .motion_known = 1, .kind = NS2_KIND_JOYCON_R,
         .motion = {.known = 1, .host_timestamp_us = 1234, .gyro_x = 90, .acceleration_z = 1},
     };
     expect(send(relayClient, &motionPacket, sizeof motionPacket, 0) == sizeof motionPacket, "motion relay publishes");
@@ -797,6 +797,17 @@ int main(int argc, const char **argv) {
     for (int attempt = 0; attempt < 100 && !s2a_pad_read_motion(&ns2Motion); attempt++) usleep(1000);
     expect(ns2Motion.host_timestamp_us == 1234 && ns2Motion.gyro_x == 90 && ns2Motion.acceleration_z == 1,
            "Switch 2 Pro motion reaches shared Mac six-axis entry");
+    // 通道 v2 带型号（#520）：游戏端照收；菜单显示名跟着型号
+    expect(s2a_mac_ns2_kind() == NS2_KIND_JOYCON_R && !strcmp(s2a_mac_ns2_kind_name(s2a_mac_ns2_kind()), "Joy-Con 2 (R)"),
+           "relay v2 carries the controller kind to the game");
+    expect(!strcmp(s2a_mac_ns2_kind_name(NS2_KIND_JOYCON_PAIR), "Joy-Con 2 (L + R)") && !strcmp(s2a_mac_ns2_kind_name(NS2_KIND_NONE), "Switch 手柄") && !strcmp(s2a_mac_ns2_kind_name(NS2_KIND_PRO), "Switch 2 Pro"),
+           "kind display names: pair and not-connected fallback");
+    // 旧版启动器（通道 v1）：游戏端断开、不猜字段，型号回到 NONE
+    ns2_relay_packet oldPacket = motionPacket; oldPacket.version = 1;
+    expect(send(relayClient, &oldPacket, sizeof oldPacket, 0) == sizeof oldPacket, "relay v1 packet sent");
+    for (int attempt = 0; attempt < 100 && s2a_mac_ns2_status() != NS2_STATUS_DISCONNECTED; attempt++) usleep(1000);
+    expect(s2a_mac_ns2_status() == NS2_STATUS_DISCONNECTED && s2a_mac_ns2_kind() == NS2_KIND_NONE,
+           "relay version mismatch disconnects instead of guessing fields");
     s2a_pad_set_motion_enabled(0);
     s2a_mac_ns2_detach();
     close(relayClient);

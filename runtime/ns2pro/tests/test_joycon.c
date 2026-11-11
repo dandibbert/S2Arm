@@ -61,6 +61,14 @@ int main(void) {
        "⑭ 那一只已失败 / 是 Pro / 没有型号：不扫另一侧");
     CK(!ns2_link_failure_stops_scan(NS2_KIND_JOYCON_L) && !ns2_link_failure_stops_scan(NS2_KIND_JOYCON_R) && ns2_link_failure_stops_scan(NS2_KIND_PRO),
        "⑮ 链路失败：Joy-Con 不停扫描（另一侧还在窗口里），Pro 照旧停");
+    // 对外输出型号（#520）：期望按「两只都在出输入且一左一右才算一对」手算
+    CK(ns2_output_kind(NS2_KIND_JOYCON_L, 1, NS2_KIND_JOYCON_R, 1) == NS2_KIND_JOYCON_PAIR && ns2_output_kind(NS2_KIND_JOYCON_R, 1, NS2_KIND_JOYCON_L, 1) == NS2_KIND_JOYCON_PAIR,
+       "⑯ 左右都在出输入：一对（槽位顺序无关）");
+    CK(ns2_output_kind(NS2_KIND_JOYCON_L, 1, NS2_KIND_JOYCON_R, 0) == NS2_KIND_JOYCON_L && ns2_output_kind(NS2_KIND_JOYCON_L, 0, NS2_KIND_JOYCON_R, 1) == NS2_KIND_JOYCON_R,
+       "⑰ 另一只还在连 / 已失败：只报在出输入的那只");
+    CK(ns2_output_kind(NS2_KIND_PRO, 1, NS2_KIND_NONE, 0) == NS2_KIND_PRO && ns2_output_kind(NS2_KIND_NONE, 0, NS2_KIND_NONE, 0) == NS2_KIND_NONE &&
+       ns2_output_kind(NS2_KIND_JOYCON_L, 1, NS2_KIND_JOYCON_L, 1) == NS2_KIND_JOYCON_L,
+       "⑱ Pro 照报 Pro；都没有报 NONE；两只同侧不算一对");
     printf("%s test_joycon：%d 项不符\n", bad ? "✗" : "✓", bad);
     return bad ? 1 : 0;
 }
