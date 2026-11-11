@@ -1,5 +1,8 @@
 // S2Arm modification: add the sorting entry, keep transformed neighbours mounted and align the title during scrolling.
 import SwiftUI
+#if canImport(QuartzCore)
+import QuartzCore   // CADisplayLink for the deck momentum driver on macOS (the probe/test platform)
+#endif
 
 /// The library when it is wider than it is tall: one card in the middle, its neighbours turned back, the title and
 /// state underneath. The card is the button: a tap on the centred card does what the game needs (Play, choose its
@@ -30,6 +33,39 @@ struct CoverFlowView: View, Equatable {
     @State private var gestureStart = 0
     /// False while the carousel scrolls, decelerates or snaps: a tap on the centre card then does nothing.
     @State private var settled = true
+    /// The card in the middle when the current touch began. A tap is judged against this snapshot, not against
+    /// whatever is selected by the time the finger lifts.
+    @State private var touchStartID: String?
+    @State private var touchActive = false
+    /// When the selection last changed: on the shelf (no scroll phases) a centre-card tap counts only once the
+    /// switch animation has had its 0.32s.
+    @State private var lastSwitchAt = Date.distantPast
+    /// The carousel's latest scroll velocity in points per millisecond, sampled from the geometry changes, so
+    /// the landing card can be committed the moment the snap is decided instead of when the scroll settles.
+    @State private var scrollVelocity: CGFloat = 0
+    @State private var lastOffsetAt: Date?
+    // MARK: Deck train state (one to three games)
+
+    /// The train's scroll amount in card units (1.0 = one stride); at rest it is exactly the selected index.
+    /// Card units, not points, so a rest value can never be poisoned by a transitional layout width.
+    @State private var deckOffset: CGFloat = 0
+    /// The offset when the current drag began, and the drag's unclamped logical offset (raw finger travel in card
+    /// units): the landing projection reads the logical value, the display value is rubber-banded at the ends.
+    @State private var deckDragStart: CGFloat = 0
+    @State private var deckDragLogical: CGFloat = 0
+    /// Drag tail samples (last 120ms), for the true release velocity.
+    @State private var deckDragSamples: [(time: Date, logical: CGFloat)] = []
+    @State private var deckDragging = false
+    /// False from the start of any deck scroll until 0.32s after its landing was committed (the epoch rule).
+    @State private var deckIsSettled = true
+    @State private var deckEpoch = 0
+    /// Free momentum after a fast flick: a display-link driver integrates friction decay straight
+    /// into `deckOffset`; there is no predetermined target while it runs.
+    @State private var deckMomentumActive = false
+    @State private var deckMomentumVelocity: CGFloat = 0
+    @State private var deckDriver = DeckMomentumDriver()
+    /// Last deck tap adjudication: the same touch delivered twice is judged once.
+    @State private var deckTapAdjudicatedAt = Date.distantPast
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     /// Re-render only for what is drawn: the games' tiles, the selection and the hints. Settings changes elsewhere do
@@ -58,9 +94,26 @@ struct CoverFlowView: View, Equatable {
             let displayed = CoverFlowSelection.game(games: games, selected: selected, offset: scrolled,
                                                      stride: cover * 1.04, scrolling: userScrolling && games.count > 3)
             ZStack(alignment: .top) {
+                if games.count <= 3 {
+                    // The deck's full-area drag host (the carousel host is the whole
+                    // screen). The train's own frame is only the card band, and a drag is recognised
+                    // only where a hit-testable view carries it into the gesture — beside the cards,
+                    // toward the screen's edges, the band's gaps reached no gesture at all, so a swipe
+                    // that started there did nothing (device report). This layer is that host: the
+                    // whole area, under everything else, carrying the same drag. A touch takes exactly
+                    // one hit path, so a touch on a card still goes through the train's own gesture
+                    // and the two never double-fire; the bar, the hints and the words stay in front,
+                    // their buttons keep their taps, and a drag through their empty ground scrolls
+                    // the deck.
+                    Rectangle()
+                        .fill(.white.opacity(0.001))
+                        .frame(maxWidth: .infinity, maxHeight: .infinity)
+                        .gesture(deckDrag(stride: cover + cover * 0.04))
+                        .accessibilityHidden(true)
+                }
                 VStack(spacing: 0) {
                     Group {
-                        if games.count <= 3 { shelf(width: geometry.size.width, cover: cover) } else { carousel(width: geometry.size.width, cover: cover) }
+                        if games.count <= 3 { train(width: geometry.size.width, cover: cover) } else { carousel(width: geometry.size.width, cover: cover) }
                     }.frame(height: cardHeight * 1.06)
                     info(displayed, short: short, width: geometry.size.width)
                         .padding(.top, gap).padding(.horizontal, 24)
@@ -77,7 +130,16 @@ struct CoverFlowView: View, Equatable {
         }
         .sensoryFeedback(.selection, trigger: selected.id)
         .onAppear { centredID = selected.id }
+        // Snapshot the centred card at the start of every touch, before anything in that touch can move the
+        // selection. Simultaneous and distance-free, so it never takes part in the gestures themselves.
+        .simultaneousGesture(DragGesture(minimumDistance: 0)
+            .onChanged { _ in if !touchActive { touchActive = true; touchStartID = selected.id } }
+            .onEnded { _ in touchActive = false })
         .onChange(of: selected.id) { _, id in
+            lastSwitchAt = Date()
+            // The deck train follows an external selection change with its own settle animation (guarded against
+            // the player's drag and momentum inside `syncDeckOffset`).
+            syncDeckOffset()
             // A selection from the D-pad or a tap scrolls the carousel. Never while the player is touching it or it is
             // still moving: the player's gesture always wins.
             guard centredID != id, !userScrolling else { return }
@@ -159,8 +221,16 @@ struct CoverFlowView: View, Equatable {
         .scrollTargetBehavior(CardSnap(stride: stride, count: games.count, start: gestureStart))
         .scrollPosition(id: $centredID, anchor: .center)
         .contentMargins(.horizontal, margin, for: .scrollContent)
-        .onScrollGeometryChange(for: CGFloat.self) { $0.contentOffset.x + $0.contentInsets.leading } action: { _, offset in
+        .onScrollGeometryChange(for: CGFloat.self) { $0.contentOffset.x + $0.contentInsets.leading } action: { old, offset in
             scrolled = offset
+            // Keep the latest velocity (points per millisecond, positive toward the later cards), sampled here so
+            // the phase change below can predict the snap's landing card from the same rule the snap itself uses.
+            let now = Date()
+            if let last = lastOffsetAt {
+                let dt = now.timeIntervalSince(last) * 1000
+                if dt > 0 { scrollVelocity = (offset - old) / CGFloat(dt) }
+            }
+            lastOffsetAt = now
         }
         .onScrollPhaseChange { old, phase, context in
             // A touch scroll goes interacting, decelerating, maybe animating (the snap), then idle. Only once it has
@@ -171,6 +241,17 @@ struct CoverFlowView: View, Equatable {
             if phase == .interacting && old != .interacting {
                 let offset = context.geometry.contentOffset.x + context.geometry.contentInsets.leading
                 gestureStart = min(games.count - 1, max(0, Int((offset / stride).rounded())))
+            }
+            if phase == .decelerating && old == .interacting {
+                // Landing commit (the landing rule): the snap target is decided as the finger lifts, so commit
+                // the selection in that same frame — the backdrop, title and counter crossfade while the card is
+                // still travelling, not a beat after it lands. Predicted with CardSnap's own rule from the release
+                // offset and velocity; the idle pass below still corrects from the final offset if this missed.
+                // While the finger is down nothing is committed, so an undecided drag never flickers the backdrop.
+                let offset = context.geometry.contentOffset.x + context.geometry.contentInsets.leading
+                let card = CardSnap.card(target: offset + scrollVelocity * 200, velocity: scrollVelocity,
+                                         stride: stride, count: games.count, start: gestureStart)
+                if games[card].id != selected.id { select(games[card].id) }
             }
             switch phase {
             case .interacting, .decelerating: userScrolling = true
@@ -188,31 +269,242 @@ struct CoverFlowView: View, Equatable {
         .scrollClipDisabled()
     }
 
-    /// One to three games: they sit together in the middle, the chosen one in front and larger. No empty track.
-    private func shelf(width: CGFloat, cover: CGFloat) -> some View {
-        let card = min(cover, width / (1 + CGFloat(games.count - 1) * 0.8))
-        let chosenIndex = selectedIndex
+    // MARK: Deck train (one to three games)
+
+    /// One to three games on the same rigid train that every count can share (
+    /// ported here for the ≤3 branch; the >3 ScrollView carousel above keeps its own mechanism): one shared
+    /// offset in card units drives every card through `DeckCardTransform`, whose animatableData is the offset
+    /// itself, so position, turn, scale, brightness, opacity and zIndex of every card are pure functions of the
+    /// same interpolated scalar in any frame — no card has its own animation clock. The selected
+    /// card is therefore centred at every rest position, the drag follows the finger 1:1, and the landing is
+    /// decided by the landing rule (logical offset + 220ms velocity projection, clamped only at the ends),
+    /// with free momentum for fast flicks. Card size is the same `cover` the carousel uses; the
+    /// old shelf's per-count cap (cover ÷ (1 + (n−1)×0.8)) was the retired "whole row on screen" sizing and
+    /// goes with it.
+    private func train(width: CGFloat, cover: CGFloat) -> some View {
+        let stride = cover + cover * 0.04
+        let areaH = cover * 9 / 16 * 1.06
         return ZStack {
             ForEach(Array(games.enumerated()), id: \.element.id) { index, detail in
-                let chosen = index == chosenIndex
-                coverButton(detail, cover: card)
-                    .scaleEffect(chosen ? 1 : 0.8)
-                    .brightness(chosen ? 0 : -0.22)
-                    .offset(x: (CGFloat(index) - CGFloat(games.count - 1) / 2) * card * 0.78)
-                    .zIndex(chosen ? 10 : -Double(abs(index - chosenIndex)))
+                coverButton(detail, cover: cover, onTapOverride: { deckTapCard(index: index) })
+                    .modifier(DeckCardTransform(index: index, offset: deckOffset, width: width, stride: stride,
+                                                cover: cover, areaH: areaH, reduceMotion: reduceMotion))
             }
         }
-        .animation(reduceMotion ? nil : .smooth(duration: 0.3), value: selected.id)
-        .frame(maxWidth: .infinity)
+        .frame(width: width, height: areaH)
+        .contentShape(Rectangle())
+        .gesture(deckDrag(stride: stride))
+        .onAppear { snapDeckToFocus() }
+        .onChange(of: games.map(\.id)) { _, _ in snapDeckToFocus() }
+        .onDisappear { stopDeckMomentum() }
     }
 
-    private func coverButton(_ detail: GameDetail, cover: CGFloat) -> some View {
+    /// The drag: the display offset follows the finger 1:1 (rubber-banded ×0.35 past the ends), the logical
+    /// offset stays unclamped for the landing projection, and the selection follows the nearest card as the
+    /// drag crosses each midpoint, so the title, counter and backdrop crossfade while travelling.
+    private func deckDrag(stride: CGFloat) -> some Gesture {
+        DragGesture(minimumDistance: 10)
+            .onChanged { value in
+                if !deckDragging {
+                    deckDragging = true
+                    // A finger landing on a moving train stops the momentum driver first; the drag starts from
+                    // the offset of this very frame, no jump.
+                    stopDeckMomentum()
+                    deckDragStart = deckOffset
+                    deckDragSamples = [(time: value.time, logical: deckOffset)]
+                    beginDeckScroll()
+                }
+                let logical = deckDragStart - value.translation.width / stride
+                deckDragLogical = logical
+                deckDragSamples.append((time: value.time, logical: logical))
+                deckDragSamples.removeAll { value.time.timeIntervalSince($0.time) > 0.12 }
+                deckOffset = DeckMath.rubberBand(logical: logical, count: games.count)
+                let nearest = min(games.count - 1, max(0, Int(logical.rounded())))
+                if nearest != selectedIndex { select(games[nearest].id) }
+            }
+            .onEnded { value in
+                deckDragging = false
+                // Release velocity toward the later cards, in card units (DragGesture's points/sec
+                // ÷ 1000 ÷ stride = cards/ms for the projection; ×1000 for the per-second tail estimate).
+                let velocity = -value.velocity.width / 1000 / stride
+                let card = DeckMath.cardSnap(logicalCards: deckDragLogical, velocityCards: velocity, count: games.count)
+                // The momentum gate and the driver's initial velocity use the tail-sampled true release
+                // velocity; the low-speed path below keeps the damped value verbatim.
+                let velocityPerSecond = DeckMath.releaseVelocity(samples: deckDragSamples, endTime: value.time,
+                                                                 endLogical: deckDragLogical, fallback: velocity * 1000)
+                let estimatedCard = DeckMath.cardSnap(logicalCards: deckDragLogical, velocityCards: velocityPerSecond / 1000,
+                                                      count: games.count)
+                let estimatedDistance = CGFloat(estimatedCard) - deckOffset
+                let projectedDistance = CGFloat(card) - deckOffset
+                if !reduceMotion,
+                   abs(velocityPerSecond) > DeckMath.momentumSnapVelocity,
+                   abs(estimatedDistance) > 1,
+                   deckOffset >= 0,
+                   deckOffset <= CGFloat(games.count - 1) {
+                    startDeckMomentum(velocityPerSecond: velocityPerSecond)
+                } else {
+                    withAnimation(deckSettleAnimation(distanceCards: projectedDistance, releaseVelocityCards: velocity)) {
+                        deckOffset = CGFloat(card)
+                    }
+                    if games.indices.contains(card) { select(games[card].id) }
+                    finishDeckScroll(epoch: deckEpoch)
+                }
+            }
+    }
+
+    /// A tap on a train card, judged by the tap rule (with a frontal gate): the focus is read
+    /// as it stands at adjudication time — never from a touch-start snapshot — so a side card can only ever be
+    /// centred, and the centred card acts only once the train has settled exactly frontal. A long press opens
+    /// the card menu (GameTileMenu, a context menu) and never reaches this tap path, so no guard is needed.
+    private func deckTapCard(index idx: Int) {
+        stopDeckMomentum()
+        let place = CGFloat(idx) - deckOffset
+        deckTap(index: idx, isSettled: deckIsSettled && !deckDragging, isFrontal: abs(place) <= 0.02) {
+            beginDeckScroll()
+            withAnimation(deckSettleAnimation(distanceCards: CGFloat(idx) - deckOffset)) {
+                deckOffset = CGFloat(idx)
+            }
+            select(games[idx].id)
+            finishDeckScroll(epoch: deckEpoch)
+        }
+    }
+
+    private func deckTap(index idx: Int, isSettled: Bool, isFrontal: Bool, focusAction: () -> Void) {
+        if Date().timeIntervalSince(deckTapAdjudicatedAt) < 0.4 { return }
+        deckTapAdjudicatedAt = Date()
+        if idx != selectedIndex {
+            focusAction()
+        } else if isSettled && isFrontal {
+            primary(games[idx])
+        } else if !isFrontal {
+            focusAction()
+        }
+    }
+
+    /// The landing animation: within one card the original timing curve, its duration growing
+    /// with the distance; a multi-card release with a velocity goes on the near-constant-speed Bézier, its
+    /// duration near-linear in the distance. Reduced motion is a 0.2 linear.
+    private func deckSettleAnimation(distanceCards: CGFloat, releaseVelocityCards: CGFloat? = nil) -> Animation {
+        if reduceMotion { return .linear(duration: 0.2) }
+        let strides = Double(abs(distanceCards))
+        if strides > 1, releaseVelocityCards != nil {
+            return .timingCurve(0.40, 0.46, 0.80, 1, duration: min(0.85, 0.10 + 0.15 * strides))
+        }
+        return .timingCurve(0.22, 0.61, 0.36, 1, duration: min(0.55, 0.3 + 0.09 * max(0, strides - 1)))
+    }
+
+    /// Free momentum: after a fast flick the offset keeps the release velocity and decays by
+    /// friction (λ = 2.6), integrated analytically per frame straight into the offset state — no target is
+    /// predetermined; the travel is v₀/λ. When the speed falls to the snap threshold, or the train reaches an
+    /// end, the remainder (≤ ½ card) is snapped with the short curve and the focus is aligned unconditionally.
+    private func startDeckMomentum(velocityPerSecond: CGFloat) {
+        beginDeckScroll()
+        deckMomentumActive = true
+        deckMomentumVelocity = velocityPerSecond
+        deckDriver.onTick = { [self] dt in deckMomentumTick(dt: dt) }
+        deckDriver.start()
+    }
+
+    private func deckMomentumTick(dt: CGFloat) {
+        let velocity = deckMomentumVelocity
+        let step = DeckMath.momentumStep(offset: deckOffset, velocity: velocity, dt: dt)
+        deckMomentumVelocity = step.velocity
+        var next = step.offset
+        let maxCards = CGFloat(games.count - 1)
+        var hitBound = false
+        if next <= 0, velocity < 0 {
+            next = 0
+            hitBound = true
+        } else if next >= maxCards, velocity > 0 {
+            next = maxCards
+            hitBound = true
+        }
+        deckOffset = next
+        let nearest = min(games.count - 1, max(0, Int(next.rounded())))
+        if nearest != selectedIndex { select(games[nearest].id) }
+        if hitBound {
+            endDeckMomentum(snapTo: Int(next))
+        } else if abs(deckMomentumVelocity) <= DeckMath.momentumSnapVelocity {
+            endDeckMomentum(snapTo: nearest)
+        }
+    }
+
+    /// Momentum's only normal exit: stop the driver, snap to the integer card and align the selection to the
+    /// same index, unconditionally.
+    private func endDeckMomentum(snapTo card: Int) {
+        stopDeckMomentum()
+        withAnimation(deckSettleAnimation(distanceCards: CGFloat(card) - deckOffset)) {
+            deckOffset = CGFloat(card)
+        }
+        if games.indices.contains(card) { select(games[card].id) }
+        finishDeckScroll(epoch: deckEpoch)
+    }
+
+    private func stopDeckMomentum() {
+        deckDriver.stop()
+        deckMomentumActive = false
+        deckMomentumVelocity = 0
+    }
+
+    private func beginDeckScroll() {
+        deckEpoch += 1
+        deckIsSettled = false
+    }
+
+    private func finishDeckScroll(epoch: Int) {
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.32) {
+            if deckEpoch == epoch { deckIsSettled = true }
+        }
+    }
+
+    /// The offset restated as the selected index, without animation (appearance, list changes): the epoch bump
+    /// also voids any in-flight settle timer, and the train counts as settled from this frame.
+    private func snapDeckToFocus() {
+        guard games.count <= 3, !deckDragging else { return }
+        stopDeckMomentum()
+        deckEpoch += 1
+        deckIsSettled = true
+        let target = CGFloat(selectedIndex)
+        guard deckOffset != target else { return }
+        var transaction = Transaction()
+        transaction.disablesAnimations = true
+        withTransaction(transaction) { deckOffset = target }
+    }
+
+    /// An external selection change (D-pad, a tap elsewhere, the host) animates the train to match — never
+    /// while the player's drag or the momentum driver owns the offset (the sync guard).
+    private func syncDeckOffset() {
+        guard games.count <= 3, !deckDragging, !deckMomentumActive else { return }
+        let target = CGFloat(selectedIndex)
+        guard abs(deckOffset - target) > 0.001 else { return }
+        beginDeckScroll()
+        withAnimation(deckSettleAnimation(distanceCards: target - deckOffset)) {
+            deckOffset = target
+        }
+        finishDeckScroll(epoch: deckEpoch)
+    }
+
+    /// Whether a tap on the centred card may act now. On the carousel the scroll phases say so; on the shelf
+    /// there are no phases, so the switch animation gets the same 0.32s grace as the deck.
+    private var deckSettled: Bool {
+        games.count <= 3 ? Date().timeIntervalSince(lastSwitchAt) >= 0.32 : settled
+    }
+
+    private func coverButton(_ detail: GameDetail, cover: CGFloat, onTapOverride: (() -> Void)? = nil) -> some View {
         let chosen = detail.id == selected.id
         return Button {
-            // The centred card acts like the game's primary action, once the carousel has settled. A side card only
-            // comes to the middle and never starts anything.
+            // The deck train judges taps itself (see `deckTapCard`); the carousel path below is unchanged.
+            if let onTapOverride {
+                onTapOverride()
+                return
+            }
+            // The centred card acts like the game's primary action — judged by the tap rule, not by what is
+            // centred when the finger lifts: the touch froze the centred card when it began (`touchStartID`), so a
+            // card that was a side card at touch-down only comes to the middle, even if it is centred by now; and
+            // the centred card starts only if it was already centred at touch-down and the deck has settled — a
+            // second tap inside the switch animation cannot start a game the player was still travelling to.
             if chosen {
-                if settled { primary(detail) }
+                if (touchStartID ?? detail.id) == detail.id, deckSettled { primary(detail) }
                 return
             }
             withAnimation(reduceMotion ? nil : .smooth(duration: 0.3)) { centredID = detail.id }
@@ -387,13 +679,167 @@ private struct FlowTilt: ViewModifier {
     let flat: Bool
     func body(content: Content) -> some View {
         let near = max(-1, min(1, place))
+        // The tilt has its own, wider clamp: a card a place and a half away reaches the 45° cap,
+        // while the scale and offset below keep the original ±1 `near`, byte for byte.
+        let tilt = max(-1.5, min(1.5, place))
         let far = place > 1 ? place - 1 : place < -1 ? place + 1 : 0
         content
-            .rotation3DEffect(.degrees(flat ? 0 : -near * 24), axis: (x: 0, y: 1, z: 0), perspective: 0.35)
+            .rotation3DEffect(.degrees(flat ? 0 : -tilt * 30), axis: (x: 0, y: 1, z: 0), perspective: 0.45)
             .scaleEffect(1 - abs(near) * 0.22)
             .offset(x: -near * cover * 0.28 - far * cover * 0.55)
             .brightness(-abs(near) * 0.25 - min(abs(far), 1) * 0.1)
             .zIndex(-Double(abs(place)))
+    }
+}
+
+/// The deck train's pure rules, as tuned for the shelf,
+/// factored out so the probe can pin them numerically.
+enum DeckMath {
+    /// The landing card: logical offset plus a 220ms velocity projection, rounded, clamped only at the ends —
+    /// a slow drag lands on the nearest card, a flick travels several. Velocities are in cards per millisecond.
+    static func cardSnap(logicalCards: CGFloat, velocityCards: CGFloat, count: Int) -> Int {
+        let projected = logicalCards + velocityCards * 220
+        return min(count - 1, max(0, Int(projected.rounded())))
+    }
+
+    /// The display offset for a logical drag offset: 1:1 inside the range, the overshoot rubber-banded ×0.35.
+    static func rubberBand(logical: CGFloat, count: Int) -> CGFloat {
+        let maxCards = CGFloat(count - 1)
+        if logical < 0 { return logical * 0.35 }
+        if logical > maxCards { return maxCards + (logical - maxCards) * 0.35 }
+        return logical
+    }
+
+    /// The true release velocity in cards per second, from the drag's last-120ms samples:
+    /// DragGesture's own velocity is a whole-gesture damped average and understates a flick's tail speed by up
+    /// to half. Falls back to the damped value when the window spans under 50ms or the slope points against it;
+    /// the slope is clamped to ±60 cards/sec against sample noise only.
+    static func releaseVelocity(samples: [(time: Date, logical: CGFloat)], endTime: Date, endLogical: CGFloat,
+                                fallback: CGFloat) -> CGFloat {
+        let window = samples.filter { endTime.timeIntervalSince($0.time) <= 0.12 }
+        guard let first = window.first else { return fallback }
+        let span = endTime.timeIntervalSince(first.time)
+        guard span >= 0.05 else { return fallback }
+        let slope = (endLogical - first.logical) / CGFloat(span)
+        if fallback != 0, slope != 0, (slope > 0) != (fallback > 0) { return fallback }
+        return min(60, max(-60, slope))
+    }
+
+    /// Momentum friction: v(t) = v₀·e^(−λt), total travel v₀/λ.
+    static let momentumDecay: CGFloat = 2.6
+    /// Below this speed (cards/sec) momentum hands over to the snap: the rest is at most half a card.
+    static let momentumSnapVelocity: CGFloat = 1.2
+
+    /// One momentum frame, solved analytically so the result is frame-rate independent:
+    /// Δoffset = v/λ·(1 − e^(−λΔt)), and the velocity after the frame.
+    static func momentumStep(offset: CGFloat, velocity: CGFloat, dt: CGFloat) -> (offset: CGFloat, velocity: CGFloat) {
+        let decay = CGFloat(exp(Double(-momentumDecay * dt)))
+        return (offset + velocity / momentumDecay * (1 - decay), velocity * decay)
+    }
+}
+
+/// Every place-derived transform of one train card: the animatable data
+/// is the train's shared offset itself, the index a fixed input, so a transaction animates exactly one scalar
+/// and every property of every card is recomputed from the same interpolated offset each frame. The formulas
+/// and their order are fixed (turn −clamp(place, ±1.5)×30° at perspective 0.45 
+/// scale 1 − |near|×0.22, pull-in near×cover×0.28, far retreat far×cover×0.55, brightness, edge fade
+/// |place| 2.0 → 2.8). The tap itself is not here: the card is a Button (see `coverButton`), which supplies
+/// the content shape and the tap; plain views would carry an onTapGesture
+/// instead — the one deliberate difference. Internal (not private) so the probe can render fractional-offset
+/// states and verify every card's placement is a pure function of the one shared offset.
+struct DeckCardTransform: ViewModifier {
+    let index: Int
+    var offset: CGFloat
+    let width: CGFloat
+    let stride: CGFloat
+    let cover: CGFloat
+    let areaH: CGFloat
+    let reduceMotion: Bool
+
+    func body(content: Content) -> some View {
+        let place = CGFloat(index) - offset
+        let near = max(-1, min(1, place))
+        let tilt = max(-1.5, min(1.5, place))
+        let far = place > 1 ? place - 1 : place < -1 ? place + 1 : 0
+        let edgeOpacity = min(1, max(0, (2.8 - Double(abs(place))) / 0.8))
+        return content
+            .rotation3DEffect(.degrees(reduceMotion ? 0 : -tilt * 30), axis: (x: 0, y: 1, z: 0), perspective: 0.45)
+            .scaleEffect(1 - abs(near) * 0.22)
+            .brightness(-abs(near) * 0.25 - min(abs(far), 1) * 0.1)
+            .position(x: width / 2 + place * stride - near * cover * 0.28 - far * cover * 0.55, y: areaH / 2)
+            .zIndex(-Double(abs(place)))
+            .opacity(edgeOpacity)
+            .allowsHitTesting(edgeOpacity > 0.05)
+    }
+}
+
+/// The Animatable conformance, isolated to the main actor: this module's types are main-actor isolated by
+/// default. SwiftUI drives the modifier on the
+/// main actor, so the isolated conformance is the one it consumes.
+extension DeckCardTransform: @MainActor Animatable {
+    var animatableData: CGFloat {
+        get { offset }
+        set { offset = newValue }
+    }
+}
+
+/// The momentum driver's frame clock: a CADisplayLink feeding dt in
+/// seconds (the first frame only records the time; dt is clamped to 0.05). `start` only invalidates the old
+/// clock and never clears `onTick` — the caller's contract is to assign `onTick` first and then start; `stop`
+/// is the only place that clears it, breaking the driver → closure → state cycle. (Clearing it in `start`
+/// (the driver spun with no callback and flicks froze mid-train.) On macOS the
+/// target/selector display link does not exist, so a 120Hz run-loop timer feeds the same tick contract —
+/// the only platform difference, and the integration math (DeckMath) is identical.
+@MainActor
+private final class DeckMomentumDriver: NSObject {
+    private var displayLink: CADisplayLink?
+    private var timer: Timer?
+    private var lastTimestamp: CFTimeInterval = 0
+    var onTick: ((CGFloat) -> Void)?
+
+    func start() {
+        invalidateClock()
+        lastTimestamp = 0
+        #if canImport(UIKit)
+        let link = CADisplayLink(target: self, selector: #selector(step(_:)))
+        link.add(to: .main, forMode: .common)
+        displayLink = link
+        #else
+        let timer = Timer(timeInterval: 1.0 / 120, target: self, selector: #selector(stepTimer),
+                          userInfo: nil, repeats: true)
+        RunLoop.main.add(timer, forMode: .common)
+        self.timer = timer
+        #endif
+    }
+
+    func stop() {
+        invalidateClock()
+        onTick = nil
+    }
+
+    private func invalidateClock() {
+        displayLink?.invalidate()
+        displayLink = nil
+        timer?.invalidate()
+        timer = nil
+    }
+
+    @objc private func step(_ link: CADisplayLink) {
+        tick(now: link.timestamp)
+    }
+
+    @objc private func stepTimer() {
+        tick(now: Date().timeIntervalSinceReferenceDate)
+    }
+
+    private func tick(now: CFTimeInterval) {
+        if lastTimestamp == 0 {
+            lastTimestamp = now
+            return
+        }
+        let dt = CGFloat(now - lastTimestamp)
+        lastTimestamp = now
+        onTick?(min(dt, 0.05))
     }
 }
 
