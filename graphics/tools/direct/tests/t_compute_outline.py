@@ -4,6 +4,7 @@
 """Exercise the production GiantFix seam, using only original synthetic compute shaders."""
 import os
 from pathlib import Path
+import re
 import subprocess
 import sys
 import tempfile
@@ -34,6 +35,7 @@ cases = [
     shader().replace("    const uint step = 3u;", "    const uint step = 3u;\n    dst = dst + 1;"),
     shader().replace("    const uint step = 3u;", "    const uint step = 3u;\n    /* block comments are outside the accepted dialect */\n"),
     shader().replace("        dst[gid] = acc;", '        // braces and strings in a comment: " { } return\n        dst[gid] = acc;'),
+    shader().replace(SIGNATURE, "constant uint hidden = 7u;\n#define VALUE (hidden)\n" + SIGNATURE).replace("    uint acc = gid + 1u;", "    uint hidden = gid;\n    uint acc = gid + 1u;").replace("        dst[gid] = acc;", "        dst[gid] = VALUE;").replace("    dst[gid] = acc;\n}", "}"),
 ]
 results = dshfn.batch([("giant_fix", [source]) for source in cases])
 outputs = [result.get("ok", [None])[0] for result in results]
@@ -54,17 +56,23 @@ check("mutable thread scalar remains a reference", "thread uint& acc" in out)
 check("constant scalar qualifier retained", "thread const uint& step" in out)
 check("threadgroup and private aggregate storage remains by reference", "threadgroup Scratch& shared" in out and "thread Scratch& local" in out)
 check("entry signature and dispatch attributes unchanged", SIGNATURE in out)
+restored = out[out.index(SIGNATURE):] if SIGNATURE in out else ""
+for helper in re.finditer(r"static __attribute__\(\(noinline\)\) void (s2a_outline_\d+)\([^\n]*\)\n\{\n(.*?)^\}\n", out, re.MULTILINE | re.DOTALL):
+    restored, count = re.subn(r"^[ \t]*" + helper[1] + r"\([^\n]*\);\n", lambda _: helper[2], restored, count=1, flags=re.MULTILINE)
+    check(helper[1] + " has exactly one call site", count == 1)
+check("inlining emitted bodies reconstructs the original entry byte for byte", restored == cases[0][cases[0].index(SIGNATURE):])
 check("small shader unchanged byte for byte", outputs[1] == cases[1])
 for i, name in enumerate(("exits", "barriers", "unknown declarations", "shadowed locals", "reassigned buffer pointers", "comment syntax"), 2):
     check(name + " are not outlined", outputs[i] == cases[i])
 again = dshfn.fn("giant_fix", out)[0] if out else ""
 check("transformation is idempotent", out == again)
 check("line comments do not affect lexical scope or exit detection", outputs[8] is not None and "static __attribute__((noinline)) void s2a_outline_0(" in outputs[8] and '// braces and strings in a comment: " { } return' in outputs[8])
+check("prefix macros hiding local captures leave the entire source unchanged", outputs[9] == cases[9])
 
 if not bad:
     with tempfile.TemporaryDirectory(prefix="compute_outline_") as temp:
         root = Path(temp)
-        for name, source in (("original", cases[0]), ("outlined", out)):
+        for name, source in (("original", cases[0]), ("outlined", out), ("macro-original", cases[9]), ("macro-guarded", outputs[9])):
             path = root / (name + ".metal")
             path.write_text(source)
             for sdk, minimum in (("macosx", "-mmacosx-version-min=15.0"), ("iphoneos", "-mios-version-min=18.0")):
@@ -79,5 +87,10 @@ if not bad:
         if result.stderr:
             print(result.stderr, file=sys.stderr)
         check("GPU output equals independent uint32 CPU oracle, before and after outlining", result.returncode == 0)
+        result = subprocess.run([str(runner), str(root / "macro-original.metallib"), str(root / "macro-guarded.metallib"), "identity"], text=True, capture_output=True, timeout=90)
+        print(result.stdout, end="")
+        if result.stderr:
+            print(result.stderr, file=sys.stderr)
+        check("prefix-macro guard preserves local name lookup on GPU", result.returncode == 0)
 print(f"t_compute_outline: {n} checks, {bad} failures")
 sys.exit(1 if bad else 0)

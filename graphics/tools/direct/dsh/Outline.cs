@@ -62,6 +62,11 @@ namespace S2A.Dsh
             if (msl.Length < KernelLines || msl.Contains("s2a_outline_", StringComparison.Ordinal)) return msl;
             var lines = msl.Split('\n');
             var code = lines.Select(line => line.Contains("//", StringComparison.Ordinal) ? line[..line.IndexOf("//", StringComparison.Ordinal)] : line).ToArray();
+            // Macros outside the entry can hide references to its locals (or change name lookup after extraction).
+            // Only the generator's standard includes / diagnostic pragmas need no preprocessor analysis.
+            foreach (string line in code)
+                if (line.Contains("%:", StringComparison.Ordinal) || line.TrimStart().StartsWith('#') && !Regex.IsMatch(line,
+                    @"^\s*#\s*(?:include\s*<(?:metal_stdlib|simd/simd\.h)>|pragma\s+clang\s+diagnostic\s+(?:push|pop|ignored\s+""[^""]*""))\s*$")) return msl;
             int entry = -1; Match signature = Match.Empty;
             for (int i = 0; i < lines.Length; i++)
             {

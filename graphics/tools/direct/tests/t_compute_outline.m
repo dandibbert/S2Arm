@@ -5,11 +5,11 @@
 
 int main(int argc, const char **argv) {
     @autoreleasepool {
-        if (argc != 3) return 2;
+        if (argc != 3 && argc != 4) return 2;
         id<MTLDevice> device = MTLCreateSystemDefaultDevice();
         id<MTLCommandQueue> queue = [device newCommandQueue];
         if (!device || !queue) return 2;
-        for (int k = 1; k < argc; k++) {
+        for (int k = 1; k <= 2; k++) {
             NSError *error = nil;
             id<MTLLibrary> library = [device newLibraryWithURL:[NSURL fileURLWithPath:@(argv[k])] error:&error];
             id<MTLComputePipelineState> pipeline = library ? [device newComputePipelineStateWithFunction:[library newFunctionWithName:@"main0"] error:&error] : nil;
@@ -28,6 +28,7 @@ int main(int argc, const char **argv) {
                 uint32_t expected = gid + 1;
                 // Three of each four branches execute; uint arithmetic wraps modulo 2^32.
                 for (int i = 0; i < 64 * 3 / 4 * 130; i++) expected = expected * 1664525u + 1013904226u;
+                if (argc == 4) expected = gid;
                 if (values[gid] != expected) { fprintf(stderr, "GPU mismatch: variant=%d gid=%u expected=%u actual=%u\n", k, gid, expected, values[gid]); return 1; }
             }
         }
