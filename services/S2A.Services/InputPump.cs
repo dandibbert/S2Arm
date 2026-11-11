@@ -409,12 +409,35 @@ namespace S2A.Services
                 };
             }
             device.Hid.Touchscreen.Update(points[..count]);
+            FeedGesture(device, xy, attr, count);
             if (ap != 0 && (attr[count - 1] & (uint)TouchAttribute.Start) != 0)
             {
                 ref TouchScreenState cur = ref device.Hid.SharedMemory.TouchScreen.GetCurrentEntryRef();
                 TouchState t0 = cur.TouchesCount > 0 ? cur.Touches[(int)cur.TouchesCount - 1] : default;
                 Console.Error.WriteLine($"HID：自动玩家点触 ({xy[2 * (count - 1)]}, {xy[2 * (count - 1) + 1]}) → 触摸屏共享内存：触点 {cur.TouchesCount} 个，最后一个 ({t0.X}, {t0.Y}) 属性 {t0.Attribute}，采样号 {cur.SamplingNumber}");
             }
+        }
+
+        // 触点 → HID 手势区（#568：太阁立志传Ⅴ DX 调 ActivateGesture 后只看手势区，苹果端原先从不写，纯触屏点了没反应）。
+        //   与安卓同一个识别器（TouchGestureState）；只数没抬起的触点（属性带 End 的那一帧已抬手），时间取单调时钟。
+        //   第一次有手指按下才建手势区（GestureDevice 构造时清空那块），没碰过屏幕的局不动它；游戏换了 Switch 实例就重建
+        private static TouchGestureState _gesture;
+        private static Switch _gestureOwner;
+        private static void FeedGesture(Switch device, int* xy, uint* attr, int count)
+        {
+            int down = 0, first = -1;
+            for (int i = 0; i < count; i++)
+                if ((attr[i] & (uint)TouchAttribute.End) == 0) { if (first < 0) first = i; down++; }
+            if (_gesture == null || _gestureOwner != device)
+            {
+                if (down == 0) return;
+                var gestures = new GestureDevice(device);
+                _gestureOwner = device;
+                _gesture = new TouchGestureState(g => gestures.Update(g), m => Console.Error.WriteLine("HID 手势：" + m));
+                Console.Error.WriteLine("HID 手势：开始写手势区（单点 点按 / 长按 / 拖动；多点取消）");
+            }
+            ulong ns = (ulong)((UInt128)(ulong)System.Diagnostics.Stopwatch.GetTimestamp() * 1_000_000_000UL / (ulong)System.Diagnostics.Stopwatch.Frequency);
+            _gesture.FeedContacts(down, first < 0 ? 0u : (uint)first, down == 1 ? (uint)xy[2 * first] : 0u, down == 1 ? (uint)xy[2 * first + 1] : 0u, ns);
         }
 
         // 自动玩家键 → 手柄状态：位 0–15 是按键，16–23 是左右摇杆四向伪键，换成满偏摇杆（按键位同时保留，Ryujinx 同序）

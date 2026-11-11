@@ -1,19 +1,21 @@
 using System;
 using Ryujinx.HLE.HOS.Services.Hid;
 
-namespace S2Arm.Platforms.Android;
+namespace S2A.Services;
 
-// Single-contact recognizer over source monotonic timestamps, not dequeue time.
-// Multiple contacts explicitly cancel this recognizer; raw HID remains separate.
-internal sealed class TouchGestureState
+// 触屏 → HID 手势区（单点：Touch / Tap / Press / Pan；多点直接取消，捏合 / 旋转没做）。按触点来源的单调时间判，不按取出时间。
+//   原在 android/core-runtime（只有安卓写手势区）。#568：太阁立志传Ⅴ DX 调 ActivateGesture、读手势区，苹果端从没写过这块，
+//   纯触屏下点什么都没反应；挪到服务层后 iOS 壳 / Mac 窗口（InputPump.PushTouch）与安卓共用同一个识别器。
+//   安卓喂 Feed（每点 5 个数、坐标归一到 0–65535）；苹果喂 FeedContacts（坐标已是游戏触屏空间，原样写）。原始触屏区不归这里管。
+public sealed class TouchGestureState
 {
     private readonly Action<GestureInput> _write;
     private readonly Action<string> _unsupported;
     private bool _active, _pan, _press, _blocked;
     private uint _id, _x, _y, _startX, _startY;
     private ulong _context, _startNs, _lastNs;
-    internal const ulong PressNs = 500_000_000;
-    internal const long SlopSquared = 100;
+    public const ulong PressNs = 500_000_000;
+    public const long SlopSquared = 100;
 
     public TouchGestureState(Action<GestureInput> write, Action<string> unsupported)
     {
@@ -38,18 +40,28 @@ internal sealed class TouchGestureState
         if (_active) Emit(GestureType.Cancel);
         _active = _pan = _press = _blocked = false;
     }
+    // 安卓：每点 5 个数（id、x、y 归一到 0–65535、其余两项），最多 16 点
     public void Feed(ReadOnlySpan<uint> raw, ulong ns)
     {
         if (raw.Length % 5 != 0 || raw.Length > 80 || ns == 0 || ns < _lastNs)
             throw new ArgumentException("Invalid gesture frame or regressing source time.");
-        if (raw.Length > 5) {
+        if (raw.Length == 5)
+            for (int i = 1; i < 5; i++) if (raw[i] > 65535) throw new ArgumentException("Gesture coordinate out of range.");
+        int count = raw.Length / 5;
+        FeedContacts(count, count == 0 ? 0 : raw[0], count == 0 ? 0 : (uint)((ulong)raw[1] * 1279 / 65535), count == 0 ? 0 : (uint)((ulong)raw[2] * 719 / 65535), ns);
+    }
+    // 这一刻按着的触点数与（只有一点时）它的 id、坐标（游戏触屏空间）
+    public void FeedContacts(int count, uint id, uint x, uint y, ulong ns)
+    {
+        if (count < 0 || ns == 0 || ns < _lastNs) throw new ArgumentException("Invalid gesture frame or regressing source time.");
+        if (count > 1) {
             bool report = !_blocked;
             Cancel(); _blocked = true; _lastNs = ns;
             if (report) _unsupported("Multi-contact gestures (pinch/rotate) are not implemented; gesture stream cancelled.");
             return;
         }
-        if (_blocked) { if (raw.IsEmpty) _blocked = false; _lastNs = ns; return; }
-        if (raw.IsEmpty) {
+        if (_blocked) { if (count == 0) _blocked = false; _lastNs = ns; return; }
+        if (count == 0) {
             if (_active) {
                 Tick(ns);
                 if (!_pan && !_press && ns - _startNs < PressNs) Emit(GestureType.Tap);
@@ -59,12 +71,10 @@ internal sealed class TouchGestureState
             _lastNs = ns;
             return;
         }
-        for (int i = 1; i < 5; i++) if (raw[i] > 65535) throw new ArgumentException("Gesture coordinate out of range.");
-        if (_active && raw[0] != _id) Cancel();
-        uint x = (uint)((ulong)raw[1] * 1279 / 65535), y = (uint)((ulong)raw[2] * 719 / 65535);
+        if (_active && id != _id) Cancel();
         if (!_active) {
             _active = true; _pan = _press = false;
-            _id = raw[0]; _x = _startX = x; _y = _startY = y; _startNs = ns;
+            _id = id; _x = _startX = x; _y = _startY = y; _startNs = ns;
             if (_context == ulong.MaxValue) throw new InvalidOperationException("Gesture context overflow.");
             _context++; Emit(GestureType.Touch);
         } else {

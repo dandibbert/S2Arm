@@ -1,5 +1,6 @@
 using System;
 using S2Arm.Platforms.Android;
+using S2A.Services;
 using Ryujinx.HLE.HOS.Services.Hid.Types.SharedMemory.TouchScreen;
 using Ryujinx.HLE.HOS.Services.Hid;
 using Ryujinx.HLE.HOS.Services.Hid.Types.SharedMemory;

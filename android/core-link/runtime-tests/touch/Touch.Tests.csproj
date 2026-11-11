@@ -8,7 +8,7 @@
   <ItemGroup>
     <Compile Include="Program.cs" />
     <Compile Include="../../../core-runtime/TouchHidState.cs" />
-    <Compile Include="../../../core-runtime/TouchGestureState.cs" />
+    <Compile Include="../../../../services/S2A.Services/TouchGestureState.cs" />
     <ProjectReference Include="../../../../compat/tree/src/Ryujinx.HLE/Ryujinx.HLE.csproj" />
   </ItemGroup>
 </Project>

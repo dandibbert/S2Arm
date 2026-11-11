@@ -604,6 +604,7 @@ namespace S2A.Services.Tests
         {
             TimeZoneBinaryTest.Run(Check);
             CheatsTest.Run(Check);
+            TouchGestureTest.Run(Check);
             GuestBufferAllocatorTest.Run(Check);
             GuestMemoryFar();
             ShaderCodeTableTest.Run(Check);
