@@ -33,7 +33,7 @@ int main(void) { @autoreleasepool {
     for (int r = 0; r < 20; r++) one_round(3000, 4, "① 随机");
     // ② 段表记不下：每写一个新页，直到 g_pseg_over
     pend_reset(); int over_at = -1;
-    for (int w = 0; w < PEND_MAX - 1 && g_npend < PEND_MAX - 1; w++) {
+    for (int w = 0; w < 8191; w++) {
         uint64_t dst = BASE + (uint64_t)w * 4096 + (rnd() % 256) * 16; pend_add(dst, 8, 1);
         if (g_pseg_over && over_at < 0) over_at = w;
         if (w % 7 == 0) { uint64_t a = BASE + (rnd() % (w + 1)) * 4096 + (rnd() % 4096); VERIFY(pend_last(a, 32) == naive(a, 32), "② 第 %d 写后", w); }
@@ -41,6 +41,14 @@ int main(void) { @autoreleasepool {
     VERIFY(over_at >= 0, "② 段表应记不下（实际没有，%d 段）", g_npseg);
     for (int q = 0; q < 2000; q++) { uint64_t a = BASE + (rnd() % g_npend) * 4096 + (rnd() % 4096), n = 1 + rnd() % 300; VERIFY(pend_last(a, n) == naive(a, n), "② 写满后查 %#llx", (unsigned long long)a); }
     printf("%s ② 段表第 %d 写记不下，之后走链\n", fails ? "FAIL" : "PASS", over_at);
+    // ④ 写入表按需增长：一次提交 1.1 万条（某 Switch 2 款 boss 关每帧的量，超过旧上限 8192），不该退化成「哪里都写过」，查找照样等于定义；再来一轮 4.4 万条
+    for (int big = 11000; big <= 44000; big *= 4) {
+        pend_reset();
+        for (int w = 0; w < big; w++) { uint64_t dst = BASE + (rnd() % 6) * 4096 + (rnd() % 256) * 16; VERIFY(pend_add(dst, 16 + (rnd() % 8) * 16, 1) == w, "④ %d 条里第 %d 条没记上", big, w); }
+        VERIFY(!g_pend_over && g_npend == big, "④ %d 条：g_pend_over=%d、记了 %d 条", big, g_pend_over, g_npend);
+        for (int q = 0; q < 2000; q++) { uint64_t a = pick_addr(), n = 1 + rnd() % 300; VERIFY(pend_last(a, n) == naive(a, n), "④ %d 条后查 %#llx", big, (unsigned long long)a); }
+        printf("%s ④ 一次提交 %d 条写入：没溢出、查找等于定义\n", fails ? "FAIL" : "PASS", big);
+    }
     // ③ 复位后旧写不可见
     pend_reset(); VERIFY(pend_last(BASE, 4096 * 6) == -1, "③ 复位后应查不到");
     printf("%s t_nvn_pendseg：%u 项，%u 项失败\n", fails ? "✗" : "✓", checks, fails);
