@@ -368,7 +368,9 @@ NVN(nvnMemoryPoolInitialize, NVNboolean, NVNmemoryPool *p, const NVNmemoryPoolBu
     if (!o->mem && (o->flags & 0x200)) o->mem = vpool_reserve(o);   // every virtual pool: its own address range, a page table over physical pools (see MapVirtual)
     else if (o->mem) { nvn_be_pool_add(o->mem, o->size); nvn_dirty_add_range(o->mem, o->size); }
     if (!o->mem && !(o->flags & 0x200)) LOG("【红】 MemoryPoolInitialize: non-virtual pool has no storage flags=%#x size=%#llx", o->flags, o->size);
-    o->gva = o->mem || (o->flags & 0x200) ? gva_alloc((uint64_t)(uintptr_t)o->mem, o->size) : 0;   // 虚拟池的 CPU 侧是它自己的预留段（预留失败时没有，GPU 地址照给：真机初始化即有）
+    // Switch 2（NVN2）：池建在 gsv GPU 可访问内存上，那段内存的 GPU 虚拟地址就是它的 CPU 虚拟地址，缓冲区地址 = 存储的 CPU 地址；游戏会拿 GetBufferAddress 的结果加偏移直接用 CPU 读写
+    //   （#351：给窗口地址时 CPU 读 0xC086D00000 一带非法地址崩）。所以 NVN2 不另分窗口地址，pool_ga 回存储地址，nvn_ga2ca 对它原样过。窗口只给 Switch 1（大页对齐语义，见上）
+    o->gva = !nvn2_on() && (o->mem || (o->flags & 0x200)) ? gva_alloc((uint64_t)(uintptr_t)o->mem, o->size) : 0;   // 虚拟池的 CPU 侧是它自己的预留段（预留失败时没有，GPU 地址照给：真机初始化即有）
     if (getenv("DM_NVN_VLOG")) { LOG("[nvn] MemoryPool %p mem=%p size=%#llx flags=%#x", (void *)p, (void *)o->mem, (unsigned long long)o->size, o->flags); void dm_backtrace(uint64_t fp); dm_backtrace((uint64_t)__builtin_frame_address(0)); }
     OLOG("MemoryPool %p mem=%p size=%#llx flags=%#x", (void *)p, (void *)o->mem, o->size, o->flags);
     return 1;
