@@ -864,11 +864,11 @@ namespace S2A.Services.Tests
                     "Handheld Handheld → Player1 ProController / Player1 JoyconRight → Player1 ProController / Player1 ProController → Player1 ProController", got);
             }
             // 单只 Joy-Con 横握（11-03 010036B0034E4000）：横握后看到的 ABXY / 摇杆换成物理键 / 物理方向（右只顺时针 90°：A→X、B→A、X→Y、Y→B，摇杆 (x,y)→(−y,x)；
-            //   左只逆时针 90°：A→下、B→左、X→右、Y→上，摇杆 (x,y)→(y,−x)）；竖握 / Pro 手柄不动
+            //   左只逆时针 90°：A→下、B→左、X→右、Y→上，摇杆 (x,y)→(y,−x)）；竖握 / Pro 手柄不动。右只横握的物理摇杆是右摇杆（#592），读右摇杆槽
             {
                 var HZ = Ryujinx.HLE.HOS.Services.Hid.Types.NpadJoyHoldType.Horizontal; var VT = Ryujinx.HLE.HOS.Services.Hid.Types.NpadJoyHoldType.Vertical;
                 string R(Ryujinx.HLE.HOS.Services.Hid.ControllerType t, Ryujinx.HLE.HOS.Services.Hid.Types.NpadJoyHoldType h, Ryujinx.HLE.HOS.Services.Hid.ControllerKeys k, int x, int y)
-                { var g = new Ryujinx.HLE.HOS.Services.Hid.GamepadInput { Buttons = k }; g.LStick = new Ryujinx.HLE.HOS.Services.Hid.JoystickPosition { Dx = x, Dy = y }; InputPump.RotateSideways(ref g, t, h); return $"{g.Buttons}({g.LStick.Dx},{g.LStick.Dy})"; }
+                { var g = new Ryujinx.HLE.HOS.Services.Hid.GamepadInput { Buttons = k }; g.LStick = new Ryujinx.HLE.HOS.Services.Hid.JoystickPosition { Dx = x, Dy = y }; InputPump.RotateSideways(ref g, t, h); var st = t == Ryujinx.HLE.HOS.Services.Hid.ControllerType.JoyconRight && h == HZ ? g.RStick : g.LStick; return $"{g.Buttons}({st.Dx},{st.Dy})"; }
                 string got = string.Join(" / ", R(Ryujinx.HLE.HOS.Services.Hid.ControllerType.JoyconRight, HZ, Ryujinx.HLE.HOS.Services.Hid.ControllerKeys.A, 0, 32767),
                     R(Ryujinx.HLE.HOS.Services.Hid.ControllerType.JoyconRight, HZ, Ryujinx.HLE.HOS.Services.Hid.ControllerKeys.B | Ryujinx.HLE.HOS.Services.Hid.ControllerKeys.Plus, 32767, 0),
                     R(Ryujinx.HLE.HOS.Services.Hid.ControllerType.JoyconLeft, HZ, Ryujinx.HLE.HOS.Services.Hid.ControllerKeys.A | Ryujinx.HLE.HOS.Services.Hid.ControllerKeys.Y, 0, 32767),

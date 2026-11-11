@@ -31,10 +31,10 @@ namespace S2A.Services.Tests
             GamepadInput m = new() { Buttons = ControllerKeys.B };
             InputPump.ComposeAutoplay(ref m, true, (uint)ControllerKeys.A, false, 0, 0, 0, 0, R, H);
             Row("实体手柄 B + 自动玩家 A", "B, X", m.Buttons.ToString());
-            // ④ 实体手柄摇杆 (1000, 0)，自动玩家给摇杆 (0, 2000)：自动玩家的覆盖、并转成 (−2000, 0)
+            // ④ 实体手柄摇杆 (1000, 0)，自动玩家给摇杆 (0, 2000)：自动玩家覆盖并转成物理，落在右只的右摇杆槽 (−2000, 0)
             GamepadInput s = new(); s.LStick.Dx = 1000;
             InputPump.ComposeAutoplay(ref s, true, 0, true, 0, 2000, 0, 0, R, H);
-            Row("自动玩家摇杆覆盖并转", "-2000,0", $"{s.LStick.Dx},{s.LStick.Dy}");
+            Row("自动玩家摇杆覆盖并转", "-2000,0", $"{s.RStick.Dx},{s.RStick.Dy}");
             // ⑤ 收局清旗标
             FieldInfo f = typeof(InputPump).GetField("_movedOffHandheld", BindingFlags.NonPublic | BindingFlags.Static)!;
             f.SetValue(null, true); InputPump.Stop();
