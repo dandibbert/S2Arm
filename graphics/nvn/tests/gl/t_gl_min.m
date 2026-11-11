@@ -1058,7 +1058,17 @@ int main(void) { alarm(60); @autoreleasepool {
     F(glUniform1f, void, GLint, GLfloat) F(glDepthFunc, void, GLenum) F(glDepthMask, void, GLuint) F(glDepthRangef, void, GLfloat, GLfloat) F(glDepthRange, void, double, double) F(glClearDepthf, void, GLfloat) F(glClearDepth, void, double)
     F(glGetIntegerv, void, GLenum, GLint *)
     F(glFinish, void, void) F(glGetError, GLenum, void)
-    CHECK(!gpa("glNotAFunction"), "没实现的名字回空");
+    // 没实现的核心名交安全空实现（游戏按报的 GL 版本直接调，回空就跳到地址 0 被系统杀，见 gl_core.m）；带厂商后缀的扩展名照旧回空
+    void *miss = gpa("glNotAFunction");
+    CHECK(miss != NULL && miss == gpa("glNotAFunction"), "没实现的核心名拿到安全空实现（非空、同名再查同一个）");
+    CHECK(gpa("glNotAFunctionARB") == NULL, "没实现的扩展名（厂商后缀）照旧回空");
+    if (miss) {   // 首次调用回 0、记一行红：临时把 1 / 2 号描述符接到文件里截这一行
+        char tmpl[] = "/tmp/t_gl_min_miss.XXXXXX"; int fd = mkstemp(tmpl), o1 = dup(1), o2 = dup(2); uint64_t r = 1; char got[4096] = {0};
+        if (fd >= 0) { fflush(stdout); fflush(stderr); dup2(fd, 1); dup2(fd, 2); r = ((uint64_t (*)(void))miss)(); fflush(stdout); fflush(stderr);
+            dup2(o1, 1); dup2(o2, 2); lseek(fd, 0, SEEK_SET); ssize_t n = read(fd, got, sizeof got - 1); if (n > 0) got[n] = 0; close(fd); unlink(tmpl); }
+        close(o1); close(o2);
+        CHECK(r == 0 && strstr(got, "没实现的 GL 核心函数 glNotAFunction"), "调用空实现回 0、首次调用记一行红（回 %llu）", (unsigned long long)r);
+    }
 
     // tri.vert / tri.frag 是 GLSL ES 3.20，显式申请 ES 3 配置与 ES 3.2 上下文。
     EGLBoolean es = eglBindAPI(0x30A0);   // EGL_OPENGL_ES_API

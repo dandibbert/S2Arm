@@ -37,10 +37,13 @@ void gl_names_clear(gl_names *t, void (*destroy)(void *)) {
 // ---------- 错误 ----------
 #undef gl_set_error
 void gl_set_error(GLenum e) { if (gl_cur && !gl_cur->error) gl_cur->error = e; }
+// S2A_GL_ERR_OFF=1（只给诊断局用）：错误照常打日志，但不交给游戏。游戏（如 LÖVE）读到第一个 GL 错误就抛异常退出，后面的缺口永远看不到；
+//   关掉后一局就能把所有没实现的入口 / 参数一次列全（11-11 小丑牌：栈参数、纹理换位一个修完才露下一个）。缺省关，关路径只读一次缓存的开关
 void gl_set_error_at(GLenum e, const char *fn) {
-    if (!gl_cur || gl_cur->error) return;
-    gl_cur->error = e;
-    static _Atomic int n; if (atomic_fetch_add(&n, 1) < 32) GLOG("GL 错误 %#x 由 %s 置（游戏 glGetError 会读到）", e, fn ? fn : "?");
+    static int off = -1; if (off < 0) { const char *v = getenv("S2A_GL_ERR_OFF"); off = v && *v == '1'; if (off) GLOG("【黄】 诊断：S2A_GL_ERR_OFF=1，GL 错误只记日志、不交给游戏"); }
+    if (!gl_cur || (gl_cur->error && !off)) return;
+    if (!off) gl_cur->error = e;
+    static _Atomic int n; if (atomic_fetch_add(&n, 1) < (off ? 4096 : 32)) GLOG("GL 错误 %#x 由 %s 置（%s）", e, fn ? fn : "?", off ? "诊断：没交给游戏" : "游戏 glGetError 会读到");
 }
 GL(glGetError, GLenum, void) { if (!gl_cur) return 0; GLenum e = gl_cur->error; gl_cur->error = 0; return e; }
 
@@ -55,9 +58,12 @@ __attribute__((used)) static const char *const gl_slices[] = {&gl_slice_egl, &gl
 // 核心函数（名字结尾不是两个以上大写字母的厂商后缀 ARB / EXT / NV …）没实现时不回空：游戏按报的 GL 版本直接调，拿到空指针就跳到 0、
 //   iOS 当场按代码签名杀掉（小丑牌 v0.2.6 玩家 iPhone 5 次起局都这样）。交一个预编好的空实现：第一次调用打红点名、回 0，
 //   日志直接看出游戏用了哪个，再给真实现。扩展函数照旧回空（GL 允许取不到，程序常按指针判支持）
+// 核心名 = 「gl」紧跟大写字母（glBindTexture …）且结尾不是两个以上大写的厂商后缀。「gl」后跟小写的不是 GL 函数：NVN 的 GLSL 编译库
+//   glslcInitialize / glslcSetAllocator / glslcCompile … 由游戏自己的模块导出，装载器只在这里回空时才去游戏模块找——交了空实现，游戏拿到的是什么都不做的
+//   函数，首帧前就退出（#601：0100C87006310000，v0.2.8 回归，978191cd 只看「gl」前缀）
 static int gl_core_name(const char *n) {
     size_t l = strlen(n), u = 0; while (u < l && n[l - 1 - u] >= 'A' && n[l - 1 - u] <= 'Z') u++;
-    return u < 2 && !strncmp(n, "gl", 2);
+    return u < 2 && !strncmp(n, "gl", 2) && n[2] >= 'A' && n[2] <= 'Z';
 }
 // 空实现个数 = GL_MISS_N（4096）：GL 4.6 兼容档的全部核心名约 2000+，LÖVE / glad 起局一次查一千多个（小丑牌 v0.2.7：没实现的核心名 854 个），
 //   256 个时用完就退回空、照样跳 0。每个空实现是一条带编号的小函数（第一次调用按编号点名），编号用十六进制三位拼出来：gl_miss_abc ↔ 0xabc

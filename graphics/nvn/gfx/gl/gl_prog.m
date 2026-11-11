@@ -296,6 +296,7 @@ GL(glGetProgramInfoLog, void, GLuint prog, GLsizei bufsize, GLsizei *length, GLc
     CTX(); (void)prog; if (length) *length = 0; if (log && bufsize > 0) log[0] = 0;
 }
 // 链接：两阶段都在库里、取到函数；按库表填顶点输入、默认 uniform 块（槽、大小、成员偏移）。顶点输出 / 片元输入按名字配对（出包工具已改成按名字的 user 属性）
+static int glsl_bool_decl(const char *g, const char *name, char *out, size_t n);   // 见下（type_enum 前）：源码声明是 bool 时纠正库表 / 现编字段里的 uint
 GLB(glLinkProgram, void, GLuint name) { @autoreleasepool {
     CTX(); struct gl_program *p = gl_name_get(&gl_programs, name); if (!p) { gl_set_error(GL_INVALID_VALUE); return; }
     lib_load(); p->linked = 0; p->validated = 0; p->nu = 0; p->nattr = 0; p->nsmp = 0; p->nblk = 0; p->writes_depth = 0;
@@ -324,7 +325,8 @@ GLB(glLinkProgram, void, GLuint name) { @autoreleasepool {
                 }
                 p->blk[k].slot[st] = a; if (b > p->blk[k].size) p->blk[k].size = b;
             }
-            else if (t[0] == 'u' && sscanf(t, "u:%63[^=]=%d:%7[^:]:%d:%d", nm, &a, ty, &c, &d) == 5) { gl_uniform *u = uni(p, nm); u->off[st] = a; u->count = c; u->stride = d; strlcpy(u->type, ty, sizeof u->type); }
+            else if (t[0] == 'u' && sscanf(t, "u:%63[^=]=%d:%7[^:]:%d:%d", nm, &a, ty, &c, &d) == 5) { gl_uniform *u = uni(p, nm); u->off[st] = a; u->count = c; u->stride = d; strlcpy(u->type, ty, sizeof u->type);
+                if ((!strcmp(ty, "uint") || !strncmp(ty, "uvec", 4)) && !strchr(nm, '.') && s) glsl_bool_decl(s->src, nm, u->type, sizeof u->type); }   // 源码声明是 bool：如实报（存储同为 4 字节一个分量）
             else if (t[0] == 't') {   // 采样器；口径 2 起数组带个数（t:<名>=<槽>:<类型>:<个数>，占槽 槽 … 槽 + 个数 − 1），每个元素登记一项、同一数组的各项连续
                 char type[32]; int n = 1, got = sscanf(t, "t:%63[^=]=%d:%31[^:]:%d", nm, &a, type, &n);
                 if (got < 3 || n < 1 || a < 0 || a + n > 16 || gl_tex_sampler_slot(type) < 0) {
@@ -379,10 +381,39 @@ GL(glGetProgramiv, void, GLuint name, GLenum what, GLint *v) {
         *v = m;
     } else { GLRED1("glGetProgramiv %#x 没实现", what); gl_set_error(GL_INVALID_ENUM); }
 }
+// 源码里 name 是不是声明成 bool / bvecN（「uniform / extern [精度] bool a, b[2];」，LÖVE 着色器头 #define extern uniform）：是就把类型名写进 out。
+//   默认块里的 bool 编成 SPIR-V 时被换成 uint（SPIR-V 的 uniform 块不收 bool），库表 / 现编字段只看得到 uint；glGetActiveUniform 报 GL_UNSIGNED_INT 后
+//   LÖVE 的 Shader:send 拒收布尔值（小丑牌 engine/sprite.lua:105「bad argument #2 to 'send' (number expected, got boolean)」→ Lua 报错、游戏退出）。
+//   在宿主链接时按游戏给的源码纠正：老包离线表、现编字段、旧缓存一处全管，不用重出包
+static int idch(char c) { return (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9') || c == '_'; }
+static int glsl_bool_decl(const char *g, const char *name, char *out, size_t n) {
+    static const char *const kw[] = {"uniform", "extern"}, *const ty[] = {"bvec2", "bvec3", "bvec4", "bool"};
+    size_t nl = strlen(name);
+    for (int k = 0; k < 2 && g; k++) for (const char *p = strstr(g, kw[k]); p; p = strstr(p + 1, kw[k])) {
+        size_t kl = strlen(kw[k]); if ((p != g && idch(p[-1])) || idch(p[kl])) continue;
+        const char *q = p + kl;
+        for (;;) {   // 精度修饰
+            while (*q == ' ' || *q == '\t') q++;
+            if (!strncmp(q, "lowp", 4) && !idch(q[4])) { q += 4; continue; }
+            if (!strncmp(q, "mediump", 7) && !idch(q[7])) { q += 7; continue; }
+            if (!strncmp(q, "highp", 5) && !idch(q[5])) { q += 5; continue; }
+            break;
+        }
+        const char *t = NULL; for (int j = 0; j < 4; j++) { size_t l = strlen(ty[j]); if (!strncmp(q, ty[j], l) && !idch(q[l])) { t = ty[j]; q += l; break; } }
+        if (!t) continue;
+        while (*q && *q != ';') {   // 声明列表：a, b[2], c
+            while (*q == ' ' || *q == '\t' || *q == ',') q++;
+            const char *id = q; while (idch(*q)) q++;
+            if ((size_t)(q - id) == nl && !strncmp(id, name, nl)) { snprintf(out, n, "%s", t); return 1; }
+            while (*q && *q != ',' && *q != ';') q++;
+        }
+    }
+    return 0;
+}
 // GLSL 类型名（着色器表反射）→ GL 类型枚举；认不出的回 0
 static GLenum type_enum(const char *t) {
     static const struct { const char *n; GLenum e; } m[] = {{"float", 0x1406}, {"vec2", 0x8B50}, {"vec3", 0x8B51}, {"vec4", 0x8B52}, {"int", 0x1404}, {"ivec2", 0x8B53}, {"ivec3", 0x8B54},
-        {"ivec4", 0x8B55}, {"uint", 0x1405}, {"bool", 0x8B56}, {"mat2", 0x8B5A}, {"mat3", 0x8B5B}, {"mat4", 0x8B5C}, {"sampler2D", 0x8B5E}, {"samplerCube", 0x8B60},
+        {"ivec4", 0x8B55}, {"uint", 0x1405}, {"bool", 0x8B56}, {"bvec2", 0x8B57}, {"bvec3", 0x8B58}, {"bvec4", 0x8B59}, {"uvec2", 0x8DC6}, {"uvec3", 0x8DC7}, {"uvec4", 0x8DC8}, {"mat2", 0x8B5A}, {"mat3", 0x8B5B}, {"mat4", 0x8B5C}, {"sampler2D", 0x8B5E}, {"samplerCube", 0x8B60},
         {"sampler2DShadow", 0x8B62}, {"samplerCubeShadow", 0x8DC5}, {"sampler2DArray", 0x8DC1}, {"sampler2DArrayShadow", 0x8DC4}, {"sampler3D", 0x8B5F}};
     for (size_t i = 0; i < sizeof m / sizeof *m; i++) if (!strcmp(m[i].n, t)) return m[i].e;
     return 0;
@@ -425,8 +456,8 @@ GL(glGetUniformLocation, GLint, GLuint name, const GLchar *nm) {
 // 写当前程序的 uniform：两个阶段的默认块影子里有它就都写（同一名字在两阶段是同一个 uniform）。
 // count 个元素、每个 comps 个 32 位分量，从位置里的元素号起按反射的数组步长排；超出数组的截掉（规范）；矩阵 transpose 按行主序转列主序
 static int type_comps(const char *t) {
-    return !strcmp(t, "float") || !strcmp(t, "int") || !strcmp(t, "uint") || !strcmp(t, "bool") ? 1 : !strcmp(t, "vec2") || !strcmp(t, "ivec2") ? 2 :
-           !strcmp(t, "vec3") || !strcmp(t, "ivec3") ? 3 : !strcmp(t, "mat4") ? 16 : 4;
+    return !strcmp(t, "float") || !strcmp(t, "int") || !strcmp(t, "uint") || !strcmp(t, "bool") ? 1 : !strcmp(t, "vec2") || !strcmp(t, "ivec2") || !strcmp(t, "bvec2") ? 2 :
+           !strcmp(t, "vec3") || !strcmp(t, "ivec3") || !strcmp(t, "bvec3") ? 3 : !strcmp(t, "mat4") ? 16 : 4;
 }
 static void uwrite(GLint loc, GLsizei count, const void *v, int comps, int transpose) {
     if (loc == -1) return;   // 规范：位置 −1 静默忽略
@@ -478,7 +509,7 @@ GL(glUniform1iv, void, GLint loc, GLsizei count, const GLint *value) {
     CTX(); if (count < 0) { gl_set_error(GL_INVALID_VALUE); return; } if (!count || loc == -1) return;
     if (sampler_set(loc, count, value)) return;
     struct gl_program *p = gl_name_get(&gl_programs, gl_cur->prog);
-    if (!p || loc < 0 || loc >= p->nu || strcmp(p->u[loc].type, "int")) { gl_set_error(GL_INVALID_OPERATION); return; }
+    if (!p || loc < 0 || loc >= p->nu || (strcmp(p->u[loc].type, "int") && strcmp(p->u[loc].type, "bool"))) { gl_set_error(GL_INVALID_OPERATION); return; }   // bool 也收整数（规范；LÖVE 发 bool 走它）
     gl_uniform *u = &p->u[loc];
     if (count != 1 || u->count) { GLRED1("glUniform1iv 普通 uniform 数组尚未实现"); gl_bad_feat++; gl_set_error(GL_INVALID_OPERATION); return; }
     uset(loc, value, 4);
@@ -487,8 +518,8 @@ GL(glUniformMatrix4fv, void, GLint loc, GLsizei n, GLuint transpose, const GLflo
 // 整数向量：成员类型必须是同分量数的 ivec（规范：类型不符 INVALID_OPERATION）；数组照 uwrite 的步长与截断
 static void ivwrite(GLint loc, GLsizei count, const GLint *v, int comps) {
     if (count < 0) { gl_set_error(GL_INVALID_VALUE); return; } if (loc == -1) return;
-    struct gl_program *p = gl_name_get(&gl_programs, gl_cur->prog); char want[8]; snprintf(want, sizeof want, "ivec%d", comps);
-    if (!p || loc < 0 || loc % ELEM >= p->nu || strcmp(p->u[loc % ELEM].type, want)) { gl_set_error(GL_INVALID_OPERATION); return; }
+    struct gl_program *p = gl_name_get(&gl_programs, gl_cur->prog); char want[8], wantb[8]; snprintf(want, sizeof want, "ivec%d", comps); snprintf(wantb, sizeof wantb, "bvec%d", comps);
+    if (!p || loc < 0 || loc % ELEM >= p->nu || (strcmp(p->u[loc % ELEM].type, want) && strcmp(p->u[loc % ELEM].type, wantb))) { gl_set_error(GL_INVALID_OPERATION); return; }   // bvecN 也收整数（规范）
     uwrite(loc, count, v, comps, 0);
 }
 GL(glUniform2iv, void, GLint loc, GLsizei n, const GLint *v) { CTX(); ivwrite(loc, n, v, 2); }

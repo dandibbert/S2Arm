@@ -25,7 +25,9 @@ GL(glScissor, void, GLint x, GLint y, GLsizei w, GLsizei h) {
 static uint32_t cap_bit(GLenum cap) {
     switch (cap) { case GL_CULL_FACE: return GLE_CULL; case GL_DEPTH_TEST: return GLE_DEPTH; case GL_STENCIL_TEST: return GLE_STENCIL; case GL_SCISSOR_TEST: return GLE_SCISSOR;
                    case GL_POLYGON_OFFSET_FILL: return GLE_POLY_OFFSET; case GL_COLOR_TABLE: return GLE_COLOR_TABLE;
-                   case 0x8DB9 /* GL_FRAMEBUFFER_SRGB */: return GLE_FB_SRGB; }   // 只记开关（LÖVE 11 起局先 glIsEnabled 再 glDisable，原先两处都置 0x500）
+                   case 0x8DB9 /* GL_FRAMEBUFFER_SRGB */: return GLE_FB_SRGB;
+                   case 0x92E0 /* GL_DEBUG_OUTPUT */: return GLE_DEBUG; case 0x8242 /* GL_DEBUG_OUTPUT_SYNCHRONOUS */: return GLE_DEBUG_SYNC; }   // 只记开关：本层不发调试消息
+                   //   （glDebugMessageCallback 是安全空实现）；小丑牌 / LÖVE 起局 glDisable(GL_DEBUG_OUTPUT)，原先置 0x500、LÖVE 查到 GL 错误抛异常   // 只记开关（LÖVE 11 起局先 glIsEnabled 再 glDisable，原先两处都置 0x500）
     return 0;
 }
 // 对 Metal 无作用的开关：GL_TEXTURE_2D（固定管线纹理，程序取代）、抖动、多重采样（单采样附件上无效）、程序点大小（着色器总写点大小）、立方体无缝（Metal 恒无缝）
