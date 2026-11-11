@@ -12,11 +12,14 @@
 static int g_caps_fps60 = -1, g_caps_fps60_display;
 // 本局要不要放开出图间隔的「来源」（不含开关；开关由 s2a_present_fps60_gate 按当局 S2A_FPS60 套）：清单 fps60_display 1（引擎通用全引擎档：没有帧率表 / 社区补丁 / Unity·UE 推导的款），
 //   或清单 fps60 0、玩家在设置页手动开了（ios/settings.m 写 S2A_FPS60=1，清单那行因此没改环境）
-// 11-11 维护者：出包默认原帧率、60 帧玩家手动开——清单里的 fps60 1 / fps60_display 1（含全引擎档）不再替玩家放开；
-//   来源只剩「玩家开了」（S2A_FPS60=1）：没有我方帧率表的款，玩家开 60 帧就放开出图间隔（游戏若按帧推进会变快，配带速度修正的补丁才对，玩家自选）
+// 11-11 维护者：出包默认原帧率、60 帧玩家手动开——清单里的 fps60 1 / fps60_display 1（含全引擎档）不再替玩家开 60 帧；
+//   本局 60 帧开着（S2A_FPS60=1）时放开出图间隔的来源：清单 fps60_display 1（全引擎档 / 逻辑速度同局 A/B 绿：A/B 就是放开着测的），
+//   或这款不是「速度已验证正确、默认开」的款（玩家手动开：配带速度修正的补丁才对，玩家自选）。
+//   已验证款里的 fps.tsv（帧率表自己带 present display 行，fps.c 起局设）与游戏原生 60 帧（交换间隔本就不需要放开，caps_policy native60「跟随游戏」）
+//   不由清单放开：宿主替它们写的 S2A_FPS60=1 不等于玩家开了，原先放开来源只认玩家开，不能因为默认开就把原生 60 帧的款也改成每个显示节拍一帧
 int s2a_fps60_display_source(void) {
     const char *e = getenv("S2A_FPS60");
-    return e && !strcmp(e, "1");
+    return e && !strcmp(e, "1") && (g_caps_fps60_display || g_caps_fps60 != 1);
 }
 
 static char g_pkeys[16][32]; static int g_npkeys;
@@ -67,8 +70,8 @@ static void apply_cap(const char *cap, const char *v, const char *why, const cha
         }
         // fps60_display 1（引擎通用全引擎档，pack/gen_caps.sh）：只记下来，图形层每局按 60 帧开关读时判（s2a_fps60_display_source + game_profile.h）
         else if (!strcmp(cap, "fps60_display")) {
-            g_caps_fps60_display = v[0] == '1';   // 只记下：11-11 起不再算放开来源（s2a_fps60_display_source 只看玩家开关）
-            if (g_caps_fps60_display) LOG("%s：清单写了放开出图间隔（原因：%s）——不再按它放开，玩家开 60 帧才放开", src, why);
+            g_caps_fps60_display = v[0] == '1';   // 只记下：60 帧开着时才算放开来源（s2a_fps60_display_source）
+            if (g_caps_fps60_display) LOG("%s：清单写了放开出图间隔（原因：%s）——60 帧开着时放开", src, why);
         }
         // gyro / haptics / direct：Settings.bundle 已缺省开，无需环境变量
         // （direct 由出包期 S2A_DUAL 决定，手柄 / 马达 / 陀螺仪 / 快捷菜单代码内置）

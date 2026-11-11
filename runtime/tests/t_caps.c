@@ -145,6 +145,29 @@ int main(void) {
     }
     { char q[800]; snprintf(q, sizeof q, "rm -rf %s/patches %s/main.npdm", T, T); (void)!system(q); unsetenv("S2A_PATCH_DIR"); }
 
+    // ⑬ 放开出图间隔的来源（s2a_fps60_display_source）：期望手算——60 帧开着时，清单 fps60_display 1（全引擎档 / A/B 绿）放开；
+    //   已验证款 fps.tsv / 游戏原生 60 帧不由清单放开（帧率表自带 present display 行 / 跟随游戏间隔）；未验证款（全引擎档无标记行、强信号 0）玩家开了就放开；60 帧关一律不放开
+    { static const struct { const char *name, *caps; const char *env; int want; } dc[] = {
+          {"fps.tsv", "fps60\t1\t# 默认开：来源 fps.tsv\n", NULL, 0},
+          {"原生 60", "fps60\t1\t# 默认开：来源 游戏原生 60 帧\n", NULL, 0},
+          {"原生 60", "fps60\t1\t# 默认开：来源 游戏原生 60 帧\n", "1", 0},
+          {"A/B 绿 + 放开行", "fps60\t1\t# 默认开：来源 逻辑速度同局 A/B 绿（ρ 1.0）\nfps60_display\t1\t# A/B\n", NULL, 1},
+          {"全引擎档 + 放开行", "fps60\t1\t# 默认开：来源 引擎通用：放开出图间隔\nfps60_display\t1\t# 全引擎\n", NULL, 0},
+          {"全引擎档 + 放开行", "fps60\t1\t# 默认开：来源 引擎通用：放开出图间隔\nfps60_display\t1\t# 全引擎\n", "1", 1},
+          {"Unity·UE 第一层", "fps60\t1\t# 默认开：来源 引擎通用第一层（Unity / UE4 放开交换间隔）\n", "1", 1},
+          {"强信号 0", "fps60\t0\t# 强信号\n", "1", 1},
+          {"强信号 0", "fps60\t0\t# 强信号\n", NULL, 0},
+          {"A/B 绿 + 放开行", "fps60\t1\t# 默认开：来源 逻辑速度同局 A/B 绿（ρ 1.0）\nfps60_display\t1\t# A/B\n", "0", 0} };
+      for (unsigned i = 0; i < sizeof dc / sizeof *dc; i++) {
+          f = fopen(path, "w"); fputs(dc[i].caps, f); fclose(f);
+          pid_t p = fork(); if (p < 0) return 1;
+          if (!p) { unsetenv("S2A_FPS_AB"); unsetenv("DM_PRESENT_INTERVAL"); if (dc[i].env) setenv("S2A_FPS60", dc[i].env, 1); else unsetenv("S2A_FPS60");
+                    s2a_caps_apply(T); _exit(s2a_fps60_display_source() ? 1 : 0); }
+          int ws = 0; waitpid(p, &ws, 0); char what[400];
+          snprintf(what, sizeof what, "⑬ 放开来源：清单 %s、启动环境 S2A_FPS60=%s", dc[i].name, dc[i].env ? dc[i].env : "（没设）");
+          expect(what, dc[i].want ? "1" : "0", WIFEXITED(ws) ? (WEXITSTATUS(ws) ? "1" : "0") : "崩");
+      } }
+
     unlink(path);
     if (fails) { printf("✗ %d 项失败\n", fails); return 1; }
     printf("✓ t_caps\n");
