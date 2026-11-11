@@ -59,7 +59,7 @@ def write_image(src_dir, tmp, prefix, rows, overlay):
     if set(have) - zero != listed: 
         extra, lost = sorted(set(have) - zero - listed), sorted(listed - set(have))
         raise Red(f'{prefix}romfs 文件与索引对不上：多 {len(extra)} 个（如 {extra[:3]}），缺 {len(lost)} 个（如 {lost[:3]}）；索引过期，重出 RomFS 索引')
-    os.makedirs(os.path.join(tmp, prefix or '.'), exist_ok=True)
+    os.makedirs(os.path.join(tmp, prefix, FILES), exist_ok=True)   # 空 RomFS（#578：数据全在 exefs）也要有这个目录：交付 / 推送按它认「库内形态」，没有就退去找不存在的 romfs.img
     h, pos, offsets, out = sha256_fast.new(), 0, [], []
     for _, n, rel in files:   # 不写镜像：按镜像顺序读一遍算长度与 sha256，文件硬链进 romfs.files/（推送时现拼）
         if int(have[rel][1]) != n: raise Red(f'{prefix}romfs/{rel} 大小与索引不符')

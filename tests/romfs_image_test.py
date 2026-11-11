@@ -72,6 +72,23 @@ class Image(unittest.TestCase):
         with self.assertRaises(romfs_image.Red): self.build()
         self.assertFalse((self.out / 'manifest.json').exists())
 
+    def test_empty_romfs_delivers_and_materializes(self):
+        # #578：RomFS 一个文件都没有（数据全在 exefs）。期望：资源包有空的 romfs.files/、镜像行是 0 字节 + 空串的 sha256；
+        #   一键出包交付（deliver_pack.py）成功（原先退去克隆不存在的 romfs.img、FileNotFoundError）；从交付目标现拼的 romfs.img 是 0 字节
+        for k in [k for k in self.files if k.startswith('romfs/')]: del self.files[k]; (self.src / k).unlink()
+        self.files['romfs/.gitkeep'] = b''; (self.src / 'romfs/.gitkeep').write_bytes(b'')   # 同 #578 那款：romfs/ 里只有一个 0 字节占位
+        (self.root / 'ui_overlay.tsv').write_text('')
+        idx = index(600, []); (self.src / 'romfs.s2aidx').write_bytes(idx); self.files['romfs.s2aidx'] = idx; self.write_index()
+        self.build()
+        self.assertTrue((self.out / 'romfs.files').is_dir())
+        rows = {l.split('\t')[0]: l.split('\t') for l in (self.out / 'index.tsv').read_text().splitlines()}
+        self.assertEqual(rows['romfs.img'][1:], ['0', sha(b'')])
+        dst = Path(self.td.name) / 'delivered'
+        r = subprocess.run([sys.executable, str(R / 'pack/oneclick/deliver_pack.py'), str(self.out), str(dst)], capture_output=True, text=True)
+        self.assertEqual(r.returncode, 0, r.stderr[-400:])
+        f = Path(romfs_image.materialize(dst, 'romfs.img', 0, sha(b''), say=lambda *_: None))
+        self.assertEqual(f.read_bytes(), b''); f.unlink()
+
     def test_unchanged_is_reused(self):
         self.build(); mt = (self.out / 'index.tsv').stat().st_mtime_ns; self.build()
         self.assertEqual((self.out / 'index.tsv').stat().st_mtime_ns, mt)
