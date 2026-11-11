@@ -350,7 +350,7 @@ namespace S2A.Services
                 }
                 catch (IOException e) when (e.HResult == EFault)
                 {
-                    if (!ReadViaBounce(stream.SafeFileHandle, destination[..n], offset, out bytesRead))
+                    if (!ReadViaBounce(stream.SafeFileHandle, destination[..n], offset, Path.GetFileName(_path), out bytesRead))
                     {
                         return ResultFs.UnexpectedInLocalFileSystemE.Value;
                     }
@@ -389,10 +389,11 @@ namespace S2A.Services
         //   内核的写不能交给写跟踪：先读进宿主中转缓冲，再报一次写（解保护、GPU 改过的子页先回写，同 GetWritableRegion(tracked)），由 CPU 拷进去。
         //   给不出游戏地址（远端开着、目标不在本线程取过的区域里）就报不了写：不拷、回 false，读盘回失败（11-01 审计 P2-21：原先只报红照拷，
         //   往仍受保护的页写即宿主崩溃，写进去了跟踪器也不知道）
-        private const int EFault = 14;
+        internal const int EFault = 14;
         private static long _bounceCount;
 
-        private unsafe bool ReadViaBounce(SafeFileHandle handle, Span<byte> destination, long offset, out long bytesRead)
+        // 也给单文件镜像 / 单一 IMG 的预建路径用（RomFsIndex.IndexedStorage 直接读 romfs.img / game.img 进游戏内存，同样会 EFAULT，#602）：name 只进日志
+        internal static unsafe bool ReadViaBounce(SafeFileHandle handle, Span<byte> destination, long offset, string name, out long bytesRead)
         {
             // 写钩子收游戏地址：远端连续块的目标视图是影子页、指针不是游戏地址，按取区域时的游戏地址换算（11-01 审计 P1-17）
             ulong host = (ulong)Unsafe.AsPointer(ref MemoryMarshal.GetReference(destination));
@@ -400,7 +401,7 @@ namespace S2A.Services
 
             if (!GuestMemory.TryGuestAddress(host, (ulong)destination.Length, out ulong va))
             {
-                Red.Report("读盘中转：目标不在本线程取过的游戏内存区域里，给不出游戏地址，报不了写、不拷，读盘回失败", $"{Path.GetFileName(_path)} 偏移 0x{offset:X}，宿主 0x{host:X} +0x{destination.Length:X}");
+                Red.Report("读盘中转：目标不在本线程取过的游戏内存区域里，给不出游戏地址，报不了写、不拷，读盘回失败", $"{name} 偏移 0x{offset:X}，宿主 0x{host:X} +0x{destination.Length:X}");
                 return false;
             }
 
@@ -408,7 +409,7 @@ namespace S2A.Services
 
             if (k <= 8 || (k & (k - 1)) == 0)
             {
-                Console.Error.WriteLine($"[fs] 读盘目标页写保护（EFAULT）改中转读：第 {k} 次，{Path.GetFileName(_path)} 偏移 0x{offset:X}，目标 0x{va:X} +0x{destination.Length:X}");
+                Console.Error.WriteLine($"[fs] 读盘目标页写保护（EFAULT）改中转读：第 {k} 次，{name} 偏移 0x{offset:X}，目标 0x{va:X} +0x{destination.Length:X}");
             }
 
             byte[] buf = ArrayPool<byte>.Shared.Rent(destination.Length);
